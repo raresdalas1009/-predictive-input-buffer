@@ -275,7 +275,8 @@ namespace {
         bool robotAutoRelease = false;  // v2.12: robot auto-release (practice mode only)
         bool autoNormalRuns = false; // v2.14: let auto-release work outside practice too
         CCLabelBMFont* autoTag = nullptr;  // v2.14: on-screen "AUTO-RELEASE ON" tag
-        CCLabelBMFont* watermark = nullptr;  // v2.46: always-on "Click Before Frames" label while the buffer is on
+        CCLabelBMFont* watermark = nullptr;  // v2.46: always-on "CBF" label while the buffer is on
+        CCDrawNode* barEdge = nullptr;       // v2.89: progress bar end cap
         bool usedThisAttempt = false;      // v2.46: the buffer was on at some point of this attempt
         bool learn = true;           // v2.13: per-level memory learned from your runs
         bool fullState = true;       // v2.11.1: copy the full v2.8 player state into the ghost
@@ -546,6 +547,8 @@ namespace {
     // v2.14: a run outside practice where auto-release can press for you is marked on screen.
     // v2.46 watermark: whenever the buffer is on (any stage but OFF) the level shows it, and
     // can't be turned off, so runs made with the mod are recognisable.
+    void refreshBarEdge();
+
     void refreshWatermark() {
         if (!buf.watermark) {
             return;
@@ -554,9 +557,26 @@ namespace {
         // checkpoint buttons); always shown in normal mode while the buffer is on.
         auto* layer = GameManager::get()->m_playLayer;
         buf.watermark->setVisible(buf.enabled && !(layer && layer->m_isPracticeMode));
+        refreshBarEdge();
         // v2.79: a custom TPS is always shown
         auto tpsText = buf.tps != 240 ? fmt::format("  |  {} TPS", buf.tps) : std::string();
-        buf.watermark->setString(fmt::format("Click Before Frames  |  {}{}", stageText(), tpsText).c_str());
+        buf.watermark->setString(fmt::format("CBF  |  {}{}", stageText(), tpsText).c_str());
+    }
+
+    // v2.89: small end cap on the progress bar while the buffer is on
+    void refreshBarEdge() {
+        if (!buf.barEdge) {
+            return;
+        }
+        buf.barEdge->clear();
+        if (!buf.enabled) {
+            return;
+        }
+        ccColor4F a { 0.75f, 0.47f, 1.f, 0.6f };
+        ccColor4F b { 0.47f, 1.f, 0.59f, 0.6f };
+        buf.barEdge->drawDot({ 3.f, -3.f }, 1.4f, a);
+        buf.barEdge->drawDot({ 7.5f, -3.f }, 1.4f, b);
+        buf.barEdge->drawDot({ 12.f, -3.f }, 1.4f, a);
     }
 
     void refreshAutoTag() {
@@ -4071,7 +4091,7 @@ $on_mod(Loaded) {
     if (Loader::get()->isModLoaded("square3ang.cbfextrapolate")) {
         say("CBF Extrapolate detected: visual only, predictions unaffected");
     }
-    say("v2.88 loaded. The stage key cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
+    say("v2.89 loaded. The stage key cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
 }
 
 class $modify(BufPlayLayer, PlayLayer) {
@@ -4246,7 +4266,7 @@ class $modify(BufPlayLayer, PlayLayer) {
         refreshPanel();
 
         buf.watermark = CCLabelBMFont::create("", "bigFont.fnt");
-        buf.watermark->setScale(0.28f);
+        buf.watermark->setScale(0.24f);  // v2.89: shorter and a little smaller, still always shown
         buf.watermark->setColor({ 150, 205, 255 });
         buf.watermark->setOpacity(153);
         buf.watermark->setAnchorPoint({ 0.f, 0.f });
@@ -4281,6 +4301,13 @@ class $modify(BufPlayLayer, PlayLayer) {
         }
 
         // Path view lives in the object layer, so it scrolls with the level.
+        buf.barEdge = nullptr;
+        if (m_progressBar) {
+            buf.barEdge = CCDrawNode::create();
+            m_progressBar->addChild(buf.barEdge, 6);
+            refreshBarEdge();
+        }
+
         buf.pathNode = CCDrawNode::create();
         // v2.48: above the level's shader effects when it has that layer; inside the shader
         // layer, dark or glow shaders could hide the path completely.
@@ -4307,6 +4334,7 @@ class $modify(BufPlayLayer, PlayLayer) {
         restoreGlobals();
         buf.hintLabel = nullptr;
         buf.heatNode = nullptr;
+        buf.barEdge = nullptr;
         memoryKey.clear();
         dropGhosts();
         PlayLayer::onQuit();
