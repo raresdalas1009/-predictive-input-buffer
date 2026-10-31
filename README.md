@@ -77,3 +77,4 @@ Practice use only; do not use for verified or leaderboard runs.
 - v2.87: Android crash when leaving a level fixed: the hidden ghost players were deleted while the level was still being torn down; on Android they're now only let go of.
 - v2.88: dash orbs no longer flash before you reach them: effects a prediction ghost added to the real level (the dash start effect) are removed after each prediction.
 - v2.90: v2.89 reverted (the full "Click Before Frames" watermark is back, no progress bar end cap).
+- v2.91: auto update: the update popup's "Update now" downloads the .geode from the latest GitHub release, checks it's this mod and newer, and installs it (restart to use it).
