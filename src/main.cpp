@@ -6645,7 +6645,12 @@ static double tpsCarry = 0.0;
 
 class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     void update(float dt) {
-        int tps = static_cast<int>(Mod::get()->getSettingValue<int64_t>("tps"));
+        // v2.96: the setting is read about once a second, not every frame
+        static int tps = 240;
+        static unsigned tpsRead = 0;
+        if (tpsRead++ % 60 == 0) {
+            tps = static_cast<int>(Mod::get()->getSettingValue<int64_t>("tps"));
+        }
         if (tps <= 240 || tpsDriving || !typeinfo_cast<PlayLayer*>(this)) {
             GJBaseGameLayer::update(dt);
             return;
