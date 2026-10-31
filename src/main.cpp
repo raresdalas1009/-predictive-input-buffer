@@ -25,6 +25,7 @@
 #include <Geode/modify/MenuLayer.hpp>
 #include <Geode/ui/TextInput.hpp>
 #include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/EndLevelLayer.hpp>
 #include <Geode/ui/GeodeUI.hpp>
 #include <Geode/ui/Popup.hpp>
@@ -5670,7 +5671,28 @@ class $modify(BufEndLevelLayer, EndLevelLayer) {
     }
 };
 
-// Pause layer Buffer button removed.
+// v2.94: the pause menu has a button for the menu again (v2.92 had dropped it, so on phones,
+// with no menu key, there was no way to open it inside a level)
+class $modify(BufPauseLayer, PauseLayer) {
+    void customSetup() {
+        PauseLayer::customSetup();
+        auto* top = CCSprite::create("heart.png"_spr);
+        top->setScale(0.55f);
+        auto* sprite = CircleButtonSprite::create(top, CircleBaseColor::DarkPurple, CircleBaseSize::Medium);
+        auto* button = CCMenuItemSpriteExtra::create(sprite, this, menu_selector(BufPauseLayer::onBufferMenu));
+        button->setID("click-before-frames-button"_spr);
+        auto* menu = CCMenu::create();
+        menu->addChild(button);
+        auto win = CCDirector::get()->getWinSize();
+        menu->setPosition({ win.width - 40.f, 40.f });
+        menu->setID("click-before-frames-menu"_spr);
+        this->addChild(menu, 10);
+    }
+
+    void onBufferMenu(CCObject*) {
+        BufferMenu::open();
+    }
+};
 
 $on_mod(Loaded) {
     buf.console = Mod::get()->getSettingValue<bool>("debug-console");
@@ -5704,7 +5726,7 @@ $on_mod(Loaded) {
     if (Loader::get()->isModLoaded("square3ang.cbfextrapolate")) {
         say("CBF Extrapolate detected: visual only, predictions unaffected");
     }
-    say("v2.93.0 loaded. Stage key cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
+    say("v2.94.0 loaded. Stage key cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
 }
 
 class $modify(BufPlayLayer, PlayLayer) {
