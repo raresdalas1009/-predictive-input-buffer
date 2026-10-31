@@ -6005,6 +6005,12 @@ class $modify(BufPlayLayer, PlayLayer) {
         syncHeld(this);
     }
 
+    void togglePracticeMode(bool practiceMode) {
+        PlayLayer::togglePracticeMode(practiceMode);
+        refreshWatermark();
+        refreshAutoTag();
+    }
+
     void playEndAnimationToPos(CCPoint position) {
         if (buf.simulating) {
             return;
