@@ -659,6 +659,8 @@ namespace {
     // the game is already dropping frames. v2.75 also capped every click at 45% of a frame:
     // at 240+ fps that was 2 ms, too short for a long cube jump's search (Penumbral's first
     // jump: only +1..+5 delays were ever tried, so most clicks got no save).
+    double frameLeft();
+
     void clickBudget() {
         double budget = buf.userBudget;
         if (buf.autoBudget) {
@@ -674,7 +676,9 @@ namespace {
                 budget = std::min(budget, 4.0);
             }
         }
-        buf.budgetMs = budget;
+        // v2.96: never more than what's left of this frame's share (at least 1 ms, so a
+        // click still gets a decision)
+        buf.budgetMs = std::max(1.0, std::min(budget, frameLeft()));
     }
 
     // v2.88 per-mode frames, kept in the mod's saved values (they start from your custom stage)
@@ -2746,7 +2750,45 @@ namespace {
         return clickTimed ? std::max(buf.budgetMs - clickMs(), buf.budgetMs * 0.5) : buf.budgetMs;
     }
 
+    // v2.96 frame cap: all of the mod's work in one rendered frame shares one budget. Clicks,
+    // searches that go on next tick (up to 4 physics ticks run per frame at 60 fps, each used
+    // to get a fresh full budget: 30+ ms in one frame on a hard click), auto-release / click and
+    // the live path view. Once a frame's share is used up, searches get the minimum and the
+    // extras skip that frame. Phones get a smaller share.
+    unsigned frameId = 0;
+    double frameSpent = 0.0;
+
+    double frameCapMs() {
+        double interval = CCDirector::get()->getAnimationInterval() * 1000.0;
+        if (interval <= 0.0) {
+            interval = 16.7;
+        }
+#ifdef GEODE_IS_MOBILE
+        return std::clamp(interval * 0.35, 2.0, 6.0);
+#else
+        return std::clamp(interval * 0.45, 2.5, 8.0);
+#endif
+    }
+
+    double frameLeft() {
+        unsigned f = CCDirector::get()->getTotalFrames();
+        if (f != frameId) {
+            frameId = f;
+            frameSpent = 0.0;
+        }
+        return frameCapMs() - frameSpent;
+    }
+
+    struct FrameTimer {
+        std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+        ~FrameTimer() {
+            frameLeft();  // makes sure the time goes to this frame
+            frameSpent += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        }
+    };
+
     struct ClickTimer {
+        FrameTimer frame;
         ClickTimer() {
             clickStart = std::chrono::steady_clock::now();
             clickTimed = true;
@@ -4735,8 +4777,14 @@ namespace {
             if (buf.appliedInput != buf.realInput && !buf.autoReleased && !buf.autoClicked) {
                 sendButton(layer, buf.realInput);
             }
-            tryAutoRelease(layer, player);
-            tryAutoClick(layer, player);
+            if (frameLeft() > 1.0) {
+                FrameTimer frameTimer;
+                tryAutoRelease(layer, player);
+            }
+            if (frameLeft() > 1.0) {
+                FrameTimer frameTimer;
+                tryAutoClick(layer, player);
+            }
             sweepGhostLayer();
             return;
         }
@@ -5729,7 +5777,7 @@ $on_mod(Loaded) {
     if (Loader::get()->isModLoaded("square3ang.cbfextrapolate")) {
         say("CBF Extrapolate detected: visual only, predictions unaffected");
     }
-    say("v2.95.0 loaded. Stage key cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
+    say("v2.96.0 loaded. Stage key cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
 }
 
 class $modify(BufPlayLayer, PlayLayer) {
@@ -6182,7 +6230,10 @@ class $modify(BufPlayerObject, PlayerObject) {
             memoryTick();
             if (buf.enabled) {
                 deliverPending(layer, this);
-                livePath(layer, this);
+                if (frameLeft() > 1.0) {
+                    FrameTimer frameTimer;
+                    livePath(layer, this);
+                }
             }
         }
 

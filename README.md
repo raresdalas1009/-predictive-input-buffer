@@ -81,3 +81,4 @@ Practice use only; do not use for verified or leaderboard runs.
 - v2.93: auto update: the update popup's "Update now" downloads the .geode from the latest GitHub release, checks it's this mod and newer, and installs it (restart to use it).
 - v2.94: the pause menu has a button (purple heart, bottom right) for the menu again, so phones can open it inside a level.
 - v2.95: watermark back (v2.92 had dropped it) and smaller: "CBF | stage" in the bottom left, smaller still on phones, hidden in practice mode.
+- v2.96: frame drops: all of the mod's work in one frame shares one time budget (about 45% of a frame on PC, 35% on phones). Searches that went on next tick used to get a fresh full budget on every physics tick, up to 4 per frame at 60 fps; auto-release, auto-click and the live path view now also skip a frame that's already used up.
