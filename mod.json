@@ -5,7 +5,7 @@
 		"android": "2.2081",
 		"mac": "2.2081"
 	},
-	"version": "v2.92.0",
+	"version": "v2.93.0",
 	"id": "basu.input-buffer",
 	"name": "Click Before Frames",
 	"developer": "BASU",
@@ -383,7 +383,7 @@
 		"check-updates": {
 			"type": "bool",
 			"name": "Check for updates",
-			"description": "On game start, check GitHub for a newer version and show a popup on the main menu if there is one.",
+			"description": "On game start, check GitHub for a newer version and show a popup on the main menu if there is one. 'Update now' downloads it from the latest GitHub release and installs it; restart the game to use it.",
 			"default": true
 		},
 		"menu-theme": {

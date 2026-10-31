@@ -5704,7 +5704,7 @@ $on_mod(Loaded) {
     if (Loader::get()->isModLoaded("square3ang.cbfextrapolate")) {
         say("CBF Extrapolate detected: visual only, predictions unaffected");
     }
-    say("v2.92.0 loaded. Stage key cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
+    say("v2.93.0 loaded. Stage key cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
 }
 
 class $modify(BufPlayLayer, PlayLayer) {
@@ -6348,6 +6348,110 @@ namespace {
     bool updateChecked = false;
     bool updateShown = false;
 
+    // v2.91 auto update: "Update now" downloads the .geode from the latest GitHub release and
+    // puts it in place of this one; the new version loads on the next start. The file is only
+    // installed if it really is this mod and a newer version than the one running.
+    constexpr bool INSTALL_UPDATES = true;
+    constexpr char const* RELEASE_API = "https://api.github.com/repos/raresdalas1009/-predictive-input-buffer/releases/latest";
+    bool updating = false;
+
+    Result<VersionInfo> packageVersion(ByteVector const& data) {
+        GEODE_UNWRAP_INTO(auto unzip, file::Unzip::create(ByteSpan(data)));
+        GEODE_UNWRAP_INTO(auto bytes, unzip.extract("mod.json"));
+        auto json = matjson::parse(std::string_view(reinterpret_cast<char const*>(bytes.data()), bytes.size()));
+        if (json.isErr()) {
+            return Err("the download has no readable mod.json");
+        }
+        auto info = json.unwrap();
+        if (info["id"].asString().unwrapOr("") != Mod::get()->getID()) {
+            return Err("the download is a different mod");
+        }
+        GEODE_UNWRAP_INTO(auto version, info["version"].asString());
+        return VersionInfo::parse(version);
+    }
+
+    void updateDone(bool ok, std::string message) {
+        updating = false;
+        say("update: {}", message);
+        if (!ok) {
+            createQuickPopup("Update failed", message + "\nYou can still get it from the GitHub page.", "OK", "Open page",
+                [](FLAlertLayer*, bool open) {
+                    if (open) {
+                        web::openLinkInBrowser(std::string(REPO_URL));
+                    }
+                });
+            return;
+        }
+        createQuickPopup("Updated!", message + "\nRestart the game to use it.", "Later", "Restart", [](FLAlertLayer*, bool restart) {
+            if (restart) {
+                game::restart(true);
+            }
+        });
+    }
+
+    void installUpdate() {
+        if (updating) {
+            return;
+        }
+        updating = true;
+        say("update: downloading...");
+        std::thread([] {
+            auto fail = [](std::string why) {
+                queueInMainThread([why] { updateDone(false, why); });
+            };
+            auto res = web::WebRequest()
+                .timeout(std::chrono::seconds(15))
+                .userAgent("ClickBeforeFrames")
+                .header("Accept", "application/vnd.github+json")
+                .getSync(RELEASE_API);
+            if (!res.ok()) {
+                return fail(fmt::format("Couldn't reach GitHub (error {}).", res.code()));
+            }
+            auto json = res.json();
+            if (json.isErr()) {
+                return fail("GitHub sent something unexpected.");
+            }
+            std::string url;
+            auto assets = json.unwrap()["assets"];
+            if (assets.isArray()) {
+                for (auto const& asset : assets) {
+                    auto name = asset["name"].asString().unwrapOr("");
+                    if (name.size() > 6 && name.ends_with(".geode")) {
+                        url = asset["browser_download_url"].asString().unwrapOr("");
+                        break;
+                    }
+                }
+            }
+            if (url.empty()) {
+                return fail("The latest release has no .geode file yet.");
+            }
+            auto file = web::WebRequest()
+                .timeout(std::chrono::seconds(120))
+                .userAgent("ClickBeforeFrames")
+                .followRedirects(true)
+                .getSync(url);
+            if (!file.ok()) {
+                return fail(fmt::format("The download failed (error {}).", file.code()));
+            }
+            auto data = std::move(file).data();
+            auto version = packageVersion(data);
+            if (version.isErr()) {
+                return fail("The downloaded file isn't a valid Click Before Frames build.");
+            }
+            auto newVersion = version.unwrap();
+            if (!(newVersion > Mod::get()->getVersion())) {
+                return fail(fmt::format("The newest download is {} and you already have {}: it isn't published yet.",
+                    newVersion.toVString(), Mod::get()->getVersion().toVString()));
+            }
+            auto written = file::writeBinarySafe(Mod::get()->getPackagePath(), ByteSpan(data));
+            if (written.isErr()) {
+                return fail("Couldn't write the new file into the mods folder.");
+            }
+            std::string done = fmt::format("Installed {}.", newVersion.toVString());
+            queueInMainThread([done] { updateDone(true, done); });
+        }).detach();
+    }
+
     void showUpdatePopup() {
         if (updateShown || latestVersion.empty() || !CCScene::get()) {
             return;
@@ -6355,8 +6459,14 @@ namespace {
         updateShown = true;
         say("update: {} is out (you have {})", latestVersion, Mod::get()->getVersion().toVString());
         createQuickPopup("Click Before Frames", fmt::format("<cp>{}</c> is out! You have {}.", latestVersion,
-            Mod::get()->getVersion().toVString()), "Later", "Open page", [](FLAlertLayer*, bool open) {
-                if (open) {
+            Mod::get()->getVersion().toVString()), "Later", INSTALL_UPDATES ? "Update now" : "Open page", [](FLAlertLayer*, bool yes) {
+                if (!yes) {
+                    return;
+                }
+                if (INSTALL_UPDATES) {
+                    installUpdate();
+                }
+                else {
                     web::openLinkInBrowser(std::string(REPO_URL));
                 }
             });
