@@ -5,7 +5,7 @@
 		"android": "2.2081",
 		"mac": "2.2081"
 	},
-	"version": "v2.90.0",
+	"version": "v2.92.0",
 	"id": "basu.input-buffer",
 	"name": "Click Before Frames",
 	"developer": "BASU",
@@ -14,7 +14,7 @@
 		"custom-ticks": {
 			"type": "int",
 			"name": "Custom stage: max delay (ticks)",
-			"description": "Max delay for the CUSTOM F6 stage, all modes except wave. 4 ticks = 1 frame at 60fps.",
+			"description": "Max delay for the CUSTOM stage (key 6), all modes except wave. 4 ticks = 1 frame at 60fps.",
 			"default": 40,
 			"min": 1,
 			"max": 64
@@ -22,7 +22,7 @@
 		"custom-wave-ticks": {
 			"type": "int",
 			"name": "Custom stage: max wave delay (ticks)",
-			"description": "Max delay for the CUSTOM F6 stage while in wave.",
+			"description": "Max delay for the CUSTOM stage (key 6) while in wave.",
 			"default": 20,
 			"min": 0,
 			"max": 64
@@ -46,7 +46,9 @@
 			"name": "Debug console window",
 			"description": "Also open a separate Windows console with the same log as the in-game console (F9). Needs a restart.",
 			"default": false,
-			"platforms": ["windows"]
+			"platforms": [
+				"windows"
+			]
 		},
 		"ground-horizon": {
 			"type": "int",
@@ -111,15 +113,15 @@
 		"wave-spam-gap": {
 			"type": "int",
 			"name": "Wave spam: max gap (ticks)",
-			"description": "Presses/releases closer together than this count as spam. After 'Spam: inputs in a row' of them, wave inputs go straight to the game until you pause. 16 ticks = 4 frames at 60fps (about 7 clicks/sec). Raise it if spam still gets buffered, lower it if tight wave parts stop being buffered.",
+			"description": "Presses/releases closer together than this count as spam. After enough in a row (see the next setting), wave inputs go straight to the game until you pause. 16 ticks = 4 frames at 60fps (about 7 clicks/sec). Raise it if spam still gets buffered, lower it if tight wave parts stop being buffered.",
 			"default": 16,
 			"min": 4,
 			"max": 40
 		},
 		"wave-spam-streak": {
 			"type": "int",
-			"name": "Spam: inputs in a row",
-			"description": "How many fast presses/releases in a row it takes before spam goes straight to the game (wave, ship, and smart UFO / ball / swing). Lower = spam is let through sooner; higher = more fast inputs are still buffered.",
+			"name": "Wave spam: fast inputs before spam",
+			"description": "How many fast presses/releases in a row it takes before spam goes straight to the game. The inputs before that are still buffered, so lower it (2) if the start of your spam feels off, raise it if quick wave zigzags stop being buffered.",
 			"default": 3,
 			"min": 2,
 			"max": 6
@@ -171,7 +173,7 @@
 		"robot-smart": {
 			"type": "bool",
 			"name": "Robot: smart jumps",
-			"description": "A robot press only counts as a crash if no hold length saves it (your usual hold, then short to long holds). Saves are found for presses that need a different jump height, and presses you can still control aren't delayed.",
+			"description": "A robot press only counts as a crash if no hold length saves it (your usual hold, then 8 holds from a tap to a full-height jump, nearest to yours first). Saves are found for presses that need a different jump height, and presses you can still control aren't delayed. Robot releases are judged the same way: a delayed release has to make the jump land safely.",
 			"default": true
 		},
 		"robot-auto-release": {
@@ -180,28 +182,22 @@
 			"description": "While you hold a robot jump, if holding longer would crash within the auto-release window and letting go survives, the mod lets go for you. Your own release is then ignored. Practice mode only, unless 'Auto-release in normal runs' is on.",
 			"default": false
 		},
+		"auto-click": {
+			"type": "bool",
+			"name": "Auto-click (clicks for you)",
+			"description": "When you're not holding and doing nothing would crash within the auto-release window, but a click right now (with your usual hold) is fully safe, the mod clicks for you. Your own click, if it still comes, is ignored. Cube, ball, UFO, robot, spider and swing (not wave / ship). Practice mode only, unless 'Auto-release in normal runs' is on; then AUTO INPUTS ON shows on screen. Runs with this aren't legit.",
+			"default": false
+		},
 		"level-memory": {
 			"type": "bool",
 			"name": "Level memory (learns from your runs)",
 			"description": "Remembers, per level and per spot, which delays worked, where saves ended in deaths and where you keep dying. Delays that worked before are tried first; spots where saves keep failing are left alone; orange dots in the path view mark spots where you die a lot. F11 forgets the current level.",
 			"default": true
 		},
-		"auto-click": {
-			"type": "bool",
-			"name": "Auto-click",
-			"description": "When you're not holding and doing nothing would crash within the auto-release window, but a click right now (with your usual hold) is fully safe, the mod clicks for you. Your own click, if it still comes, is ignored. Cube, ball, UFO, robot, spider and swing (not wave / ship). Practice mode only, unless 'Auto-release in normal runs' is on; then AUTO INPUTS ON shows on screen. Runs with this aren't legit.",
-			"default": false
-		},
-		"predict-through-portals": {
-			"type": "bool",
-			"name": "Predict through portals",
-			"description": "Predictions keep going through mode portals (cube, ship, ball, UFO, wave, robot, spider, swing): the hidden ghost switches mode there instead of the prediction stopping. Dual, solo and teleport portals still stop it. Needs 'Full ghost state' on.",
-			"default": true
-		},
 		"auto-release-normal-runs": {
 			"type": "bool",
 			"name": "Auto-release in normal runs",
-			"description": "Let auto-release (wave / robot / dash) and auto-click also work outside practice mode. While it can act, an 'AUTO INPUTS ON' tag is shown on screen. Never use it for verified or leaderboard runs.",
+			"description": "Let auto-release (wave / robot / dash) and auto-click also work outside practice mode. While they can act, an 'AUTO INPUTS ON' tag is shown on screen. Never use it for verified or leaderboard runs.",
 			"default": false
 		},
 		"spider-smart": {
@@ -231,7 +227,7 @@
 		"ship-max-delay": {
 			"type": "int",
 			"name": "Ship: max delay (ticks)",
-			"description": "Ship's own max delay, used instead of the F6 stage. Ship has momentum, so small delays are enough and big ones feel laggy. 4 ticks = 1 frame at 60fps.",
+			"description": "Ship's own max delay, used instead of the stage (key 6). Ship has momentum, so small delays are enough and big ones feel laggy. 4 ticks = 1 frame at 60fps.",
 			"default": 4,
 			"min": 0,
 			"max": 16
@@ -255,6 +251,24 @@
 			"name": "Predict moving objects (experimental)",
 			"description": "Spikes, saws and blocks near your path that are moving right now (move / rotate triggers) are moved along their current motion during predictions: straight lines, curved / circular paths and spinning, so saves account for where they will be. Easing (speeding up / slowing down) isn't predicted. Turn 'Don't buffer near moving objects' off when using this.",
 			"default": false
+		},
+		"predict-move-triggers": {
+			"type": "bool",
+			"name": "Predict move triggers",
+			"description": "Spikes, blocks and orbs that a trigger ahead of you will move are predicted the way the game will move them: move triggers (offset, duration, easing), rotate triggers (spinning around their center group or in place), toggle triggers that switch a group off or on, and spawn triggers, followed through their delays to the move / rotate / toggle triggers they set off (also spawns the game already started with a delay). Moves / rotations already in progress at your click follow their real path. Plain triggers only: target / follow / aim modes and lock to player / camera aren't predicted, touch triggers only once they've fired, and spawn triggers with random delays, remaps or ordered spawning aren't followed. The mod also checks itself: when a real trigger moves something, it compares the result with what it would have predicted, and if a level's triggers keep coming out wrong it turns this off for that level (the log says so). Turn off if saves near moving parts look wrong.",
+			"default": true
+		},
+		"no-hitch-searches": {
+			"type": "bool",
+			"name": "No-hitch searches",
+			"description": "When a search runs out of time before it tried every delay, your click waits one tick and the search goes on from there with fresh time (up to 4 times), instead of giving up on the save. The delays it already tried all crashed, so waiting a tick loses nothing, and busy parts don't stutter from long searches. If it still finds no save, the click goes through then. A new input of yours meanwhile ends the search. Turn off if clicks in busy parts feel late.",
+			"default": true
+		},
+		"plan-next-click": {
+			"type": "bool",
+			"name": "Plan two clicks ahead",
+			"description": "When a predicted run crashes into something your next click would handle (after an orb, or right after a mode portal), the ghost tries one more click (at least 24 ticks later). If that saves it, the crash isn't blamed on this click: an orb click is left alone or moved to a timing that works with your next click, and inputs before a portal aren't delayed for nothing. Turn off if saves after orbs / portals feel late.",
+			"default": true
 		},
 		"robust-saves": {
 			"type": "bool",
@@ -289,8 +303,8 @@
 		"low-latency": {
 			"type": "bool",
 			"name": "Low latency mode",
-			"description": "For players who feel the buffer as lag or delayed clicks: clicks made while a delay is waiting are not shifted after it (no chain of delayed clicks), delays are at most 1 frame, searches are capped at 3 ms (no frame hitches), and robust saves / wave margin (which can add a tick) are off.",
-			"default": false
+			"description": "For players who feel the buffer as lag or delayed clicks: clicks made while a delay is waiting are not shifted after it (no chain of delayed clicks), delays are at most 1 frame, searches are capped at 3 ms (no frame hitches), and robust saves / wave margin (which can add a tick) are off. On by default, and the same in every level.",
+			"default": true
 		},
 		"ufo-smart": {
 			"type": "bool",
@@ -333,7 +347,7 @@
 		"per-level-settings": {
 			"type": "bool",
 			"name": "Per-level settings",
-			"description": "The menu switches are remembered for each level and come back when you open it again. The stage (F6) and low latency are the same for every level.",
+			"description": "The menu switches are remembered for each level and come back when you open it again. Your stage (key 6) and low latency are the same in every level. Off by default: every level uses the same switches.",
 			"default": false
 		},
 		"death-heatmap": {
@@ -354,6 +368,12 @@
 			"description": "For PCs that drop frames when you click: predictions get at most 4 ms per click, no extra robustness checks, orbs are only tried with a normal click (no late-click retries), and the drift check and live path view are off. Saves can be a little less precise.",
 			"default": false
 		},
+		"predict-through-portals": {
+			"type": "bool",
+			"name": "Predict through portals",
+			"description": "Predictions keep going through mode portals (cube, ship, ball, UFO, wave, robot, spider, swing): the hidden ghost switches mode there instead of the prediction stopping, so clicks right before a portal can be saved. The new mode's floor / ceiling isn't known to the prediction. Teleport portals move the ghost to the orange end, and after a solo portal only P1 goes on (v2.84). After a dual portal P2 appears with P1, upside down, and both go on (v2.85). Teleports with forces / redirects / gravity changes still stop it. Turn off if saves around portals look wrong.",
+			"default": true
+		},
 		"auto-budget": {
 			"type": "bool",
 			"name": "Auto time budget",
@@ -365,22 +385,6 @@
 			"name": "Check for updates",
 			"description": "On game start, check GitHub for a newer version and show a popup on the main menu if there is one.",
 			"default": true
-		},
-		"tps": {
-			"type": "int",
-			"name": "Physics TPS",
-			"description": "Physics steps per second in levels. 240 is the normal game. Higher values change the physics, so runs at anything but 240 aren't legit completions. The buffer's windows scale with it automatically. Also a slider in the in-game menu.",
-			"default": 240,
-			"min": 240,
-			"max": 1000,
-			"control": {
-				"slider": true,
-				"slider-step": 10,
-				"input": true,
-				"arrows": true,
-				"arrow-step": 10,
-				"big-arrows": false
-			}
 		},
 		"menu-theme": {
 			"type": "string",
@@ -400,48 +404,86 @@
 			"name": "Key: change stage",
 			"description": "Works inside a level. Change it here or in Geode's keybinds popup.",
 			"category": "gameplay",
-			"default": ["Six"]
+			"default": [
+				"Six"
+			]
 		},
 		"bind-menu": {
 			"type": "keybind",
 			"name": "Key: open menu",
 			"description": "Works inside a level. Change it here or in Geode's keybinds popup.",
 			"category": "gameplay",
-			"default": ["Seven"]
+			"default": [
+				"Seven"
+			]
 		},
 		"bind-export": {
 			"type": "keybind",
 			"name": "Key: copy console log",
 			"description": "Works inside a level. Change it here or in Geode's keybinds popup.",
 			"category": "gameplay",
-			"default": ["F8"]
+			"default": [
+				"F8"
+			]
 		},
 		"bind-console": {
 			"type": "keybind",
 			"name": "Key: show / hide console",
 			"description": "Works inside a level. Change it here or in Geode's keybinds popup.",
 			"category": "gameplay",
-			"default": ["F9"]
+			"default": [
+				"F9"
+			]
 		},
 		"bind-path": {
 			"type": "keybind",
 			"name": "Key: path view",
 			"description": "Works inside a level. Change it here or in Geode's keybinds popup.",
 			"category": "gameplay",
-			"default": ["F10"]
+			"default": [
+				"F10"
+			]
 		},
 		"bind-forget": {
 			"type": "keybind",
 			"name": "Key: forget this level",
 			"description": "Works inside a level. Change it here or in Geode's keybinds popup.",
 			"category": "gameplay",
-			"default": ["F11"]
+			"default": [
+				"F11"
+			]
+		},
+		"tps": {
+			"type": "int",
+			"name": "Physics TPS",
+			"description": "Physics steps per second in levels. 240 is the normal game. Higher values change the physics, so runs at anything but 240 aren't legit completions. The buffer's windows scale with it automatically.",
+			"default": 240,
+			"min": 240,
+			"max": 1000,
+			"control": {
+				"slider": true,
+				"slider-step": 10,
+				"input": true,
+				"arrows": true,
+				"arrow-step": 10,
+				"big-arrows": false
+			}
 		}
 	},
 	"resources": {
 		"sprites": [
 			"resources/*.png"
-		]
+		],
+		"fonts": {
+			"orbitron": {
+				"path": "resources/fonts/Orbitron.ttf",
+				"size": 64
+			},
+			"exo2": {
+				"path": "resources/fonts/Exo2.ttf",
+				"size": 64
+			}
+		}
 	},
 	"links": {
 		"source": "https://github.com/raresdalas1009/-predictive-input-buffer"
