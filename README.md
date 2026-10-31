@@ -76,4 +76,4 @@ Practice use only; do not use for verified or leaderboard runs.
 - v2.86: fixed a crash when leaving a level and opening one again (v2.84/v2.85 could send a button to a level that was still loading); leaving a level now also forgets the button state.
 - v2.87: Android crash when leaving a level fixed: the hidden ghost players were deleted while the level was still being torn down; on Android they're now only let go of.
 - v2.88: dash orbs no longer flash before you reach them: effects a prediction ghost added to the real level (the dash start effect) are removed after each prediction.
-- v2.89: shorter, smaller watermark ("CBF | stage"), still always shown in normal runs; small progress bar end cap while the buffer is on.
+- v2.90: v2.89 reverted (the full "Click Before Frames" watermark is back, no progress bar end cap).
