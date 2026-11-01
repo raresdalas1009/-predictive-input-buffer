@@ -86,3 +86,4 @@ Practice use only; do not use for verified or leaderboard runs.
 - v2.99: iOS support. The iOS build needed the FMOD header forced into Geode's generated iOS bindings, arm64-only for iOS, and the menu's title shine no longer uses CCPlace (not available to mods on iOS).
 - v2.99.1: startup checkpoints in the Geode log (to find where some iPhones crash on start); the main menu button is skipped instead of crashing if its image is missing.
 - v2.99.2: iOS: the mod's file is now code-signed (ad-hoc), some iOS launchers refused to load it ("missing code signature").
+- v2.99.3: iOS/macOS: one orb hook was too short to patch safely on Apple chips and corrupted the next game function, so it is skipped there (orbs still wait for the real press); one more startup checkpoint in the log.

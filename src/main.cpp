@@ -6145,12 +6145,16 @@ class $modify(BufRingObject, RingObject) {
     }
 
     // v2.78.3: the activation call itself too (orbs and dash orbs still animated early)
+    // v2.99.3: not on iOS/macOS. There it is a 12-byte stub that jumps into powerOnObject
+    // (hooked above anyway), too short for an arm64 hook, which overwrote powerOnObject's start.
+#if !defined(GEODE_IS_IOS) && !defined(GEODE_IS_MACOS)
     void triggerActivated(float xPosition) {
         if (buf.simulating) {
             return;
         }
         RingObject::triggerActivated(xPosition);
     }
+#endif
 };
 
 class $modify(BufPlayerObject, PlayerObject) {
@@ -6601,6 +6605,8 @@ $on_mod(Loaded) {
     CBF_STEP("loaded: keybinds");
     setupKeybinds();
     CBF_STEP("loaded: keybinds done");
+    // v2.99.3: shows in the log whether the game reaches its first frame (iOS start crash hunt)
+    queueInMainThread([] { CBF_STEP("first frame"); });
 }
 
 // the main menu: a heart button that opens the menu (with the other buttons at the bottom),
