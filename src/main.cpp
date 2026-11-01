@@ -3,10 +3,10 @@
 #define CBF_HOOKS_GAME 0
 #define CBF_HOOKS_VISUAL 0
 // player hook sub-groups: P1 update+incrementJumps, P2 circles+bump, P3 effects+rotations, P4 ghost/streak/spider dash/ringJump/startDashing
-#define CBF_P1 1
+#define CBF_P1 0
 #define CBF_P2 0
 #define CBF_P3 0
-#define CBF_P4 0
+#define CBF_P4 1
 // Click Before Frames v2.9 (cube-style wave, wave auto-release, orb alignment, full ghost state, drift check, in-game console on F9)
 //
 // When you click (or release, in wave / robot), a hidden "ghost" player is simulated
