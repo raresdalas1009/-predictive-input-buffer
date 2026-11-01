@@ -22,6 +22,7 @@ jobs:
         - name: iOS
           os: macos-latest
           target: iOS
+          bindings-ref: 1605f500
     name: ${{ matrix.config.name }}
     runs-on: ${{ matrix.config.os }}
     steps:
@@ -32,6 +33,7 @@ jobs:
           sdk: stable
           combine: true
           target: ${{ matrix.config.target }}
+          bindings-ref: ${{ matrix.config.bindings-ref || '' }}
       - name: Show compile errors
         if: failure()
         shell: bash
