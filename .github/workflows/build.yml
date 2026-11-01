@@ -22,7 +22,7 @@ jobs:
         - name: iOS
           os: macos-latest
           target: iOS
-          bindings-ref: 1605f500
+          bindings-ref: 1605f500d053f8de122bf5c7dc6d17c24866e02e
     name: ${{ matrix.config.name }}
     runs-on: ${{ matrix.config.os }}
     steps:
