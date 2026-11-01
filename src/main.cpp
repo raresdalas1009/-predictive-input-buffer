@@ -6305,9 +6305,11 @@ class $modify(BufPlayerObject, PlayerObject) {
 
 #endif // CBF_P2
 #if CBF_P3
+#if 0 // left out in this test
     void playSpawnEffect() {
         if (!ghostEffect()) PlayerObject::playSpawnEffect();
     }
+#endif
 
     void createFadeOutDartStreak() {
         if (!ghostEffect()) PlayerObject::createFadeOutDartStreak();
@@ -6317,25 +6319,35 @@ class $modify(BufPlayerObject, PlayerObject) {
         if (!ghostEffect()) PlayerObject::fadeOutStreak2(duration);
     }
 
+#if 0 // left out in this test
     void playDynamicSpiderRun() {
         if (!ghostEffect()) PlayerObject::playDynamicSpiderRun();
     }
+#endif
 
+#if 0 // left out in this test
     void animatePlatformerJump(float scale) {
         if (!ghostEffect()) PlayerObject::animatePlatformerJump(scale);
     }
+#endif
 
+#if 0 // left out in this test
     void runBallRotation(float speed) {
         if (!ghostEffect()) PlayerObject::runBallRotation(speed);
     }
+#endif
 
+#if 0 // left out in this test
     void runBallRotation2() {
         if (!ghostEffect()) PlayerObject::runBallRotation2();
     }
+#endif
 
+#if 0 // left out in this test
     void runNormalRotation(bool notNormalMode, float speed) {
         if (!ghostEffect()) PlayerObject::runNormalRotation(notNormalMode, speed);
     }
+#endif
 
 #endif // CBF_P3
 #if CBF_P4
