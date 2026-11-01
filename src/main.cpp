@@ -2,6 +2,11 @@
 #define CBF_HOOKS_PLAYER 1
 #define CBF_HOOKS_GAME 0
 #define CBF_HOOKS_VISUAL 0
+// player hook sub-groups: P1 update+incrementJumps, P2 circles+bump, P3 effects+rotations, P4 ghost/streak/spider dash/ringJump/startDashing
+#define CBF_P1 1
+#define CBF_P2 0
+#define CBF_P3 0
+#define CBF_P4 0
 // Click Before Frames v2.9 (cube-style wave, wave auto-release, orb alignment, full ghost state, drift check, in-game console on F9)
 //
 // When you click (or release, in wave / robot), a hidden "ghost" player is simulated
@@ -6199,6 +6204,7 @@ class $modify(BufPlayerObject, PlayerObject) {
 
     // Runs 240x/sec per player. Ghost steps (during a simulation) skip straight to
     // the original; F6 is no longer polled here (see BufKeyboard below).
+#if CBF_P1
     void update(float dt) {
         if (buf.simulating) {
             PlayerObject::update(dt);
@@ -6266,6 +6272,7 @@ class $modify(BufPlayerObject, PlayerObject) {
         }
         PlayerObject::incrementJumps();
     }
+#endif // CBF_P1
 
     // v2.24: the ghost runs the real player's code, which also spawns visual effects
     // (circles, bump waves, trail fade-outs, spider run sprites, rotation actions). None
@@ -6275,6 +6282,7 @@ class $modify(BufPlayerObject, PlayerObject) {
         return buf.simulating && isGhost(this);
     }
 
+#if CBF_P2
     void spawnCircle() {
         if (!ghostEffect()) PlayerObject::spawnCircle();
     }
@@ -6295,6 +6303,8 @@ class $modify(BufPlayerObject, PlayerObject) {
         if (!ghostEffect()) PlayerObject::playBumpEffect(objectType, object);
     }
 
+#endif // CBF_P2
+#if CBF_P3
     void playSpawnEffect() {
         if (!ghostEffect()) PlayerObject::playSpawnEffect();
     }
@@ -6327,6 +6337,8 @@ class $modify(BufPlayerObject, PlayerObject) {
         if (!ghostEffect()) PlayerObject::runNormalRotation(notNormalMode, speed);
     }
 
+#endif // CBF_P3
+#if CBF_P4
     void toggleGhostEffect(GhostType type) {
         if (!ghostEffect()) PlayerObject::toggleGhostEffect(type);
     }
@@ -6378,6 +6390,7 @@ class $modify(BufPlayerObject, PlayerObject) {
         }
         PlayerObject::startDashing(ring);
     }
+#endif // CBF_P4
 };
 #endif // CBF_HOOKS_PLAYER
 
