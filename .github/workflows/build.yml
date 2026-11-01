@@ -31,6 +31,8 @@ jobs:
         with:
           sdk: given  # the Geode version in mod.json
           cli: latest
+          combine: true
+          target: ${{ matrix.config.target }}
       - name: Show compile errors
         if: failure()
         shell: bash
@@ -38,30 +40,17 @@ jobs:
           for d in build*/ ; do
             cmake --build "$d" 2>&1 | grep -E "error" | head -25 | sed 's/^/::error::/' || true
           done
-          combine: true
-          target: ${{ matrix.config.target }}
   package:
     name: Package builds
     runs-on: ubuntu-latest
     needs: ['build']
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: geode-sdk/build-geode-mod/combine@main
+        id: build
+      - uses: actions/upload-artifact@v4
         with:
-          path: artifacts
-      - name: Merge (diagnostic)
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set +e
-          find artifacts -type f | sed 's/^/::notice::file /'
-          gh release download -R geode-sdk/cli -p '*-linux.zip' -O cli.zip 2>&1 | sed 's/^/::notice::cli /'
-          unzip -o -q cli.zip -d cli; chmod +x cli/geode
-          ./cli/geode --version 2>&1 | sed 's/^/::notice::cli version /'
-          FILES=$(find artifacts -name '*.geode' -type f | tr '\n' ' ')
-          echo "::notice::merging $FILES"
-          ./cli/geode package merge $FILES 2>&1 | tail -20 | sed 's/^/::error::merge /'
-          for f in $FILES; do echo "::notice::$f: $(unzip -l "$f" | awk 'NR>3{print $4}' | grep -v '^$' | tr '\n' ' ')"; done
+          name: Build Output
+          path: ${{ steps.build.outputs.build-output }}
   release:
     name: Publish release
     runs-on: ubuntu-latest
