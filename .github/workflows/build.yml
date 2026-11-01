@@ -22,7 +22,7 @@ jobs:
         - name: iOS
           os: macos-latest
           target: iOS
-          bindings-ref: 1605f500d053f8de122bf5c7dc6d17c24866e02e
+          sdk: nightly
     name: ${{ matrix.config.name }}
     runs-on: ${{ matrix.config.os }}
     steps:
@@ -30,10 +30,9 @@ jobs:
       - name: Build the mod
         uses: geode-sdk/build-geode-mod@main
         with:
-          sdk: stable
+          sdk: ${{ matrix.config.sdk || 'stable' }}
           combine: true
           target: ${{ matrix.config.target }}
-          bindings-ref: ${{ matrix.config.bindings-ref || '' }}
       - name: Show compile errors
         if: failure()
         shell: bash
