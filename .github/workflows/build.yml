@@ -26,7 +26,8 @@ jobs:
       - name: Build the mod
         uses: geode-sdk/build-geode-mod@main
         with:
-          sdk: stable
+          sdk: given  # the Geode version in mod.json
+          cli: latest
           combine: true
           target: ${{ matrix.config.target }}
   package:
