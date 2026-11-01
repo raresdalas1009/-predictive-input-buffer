@@ -5705,6 +5705,7 @@ class $modify(BufPauseLayer, PauseLayer) {
 
 // v2.99.1: startup checkpoints in the Geode log (each written once), to find where a phone
 // that crashes on start stops
+static volatile bool cbfBareTest = true; // test build: run none of the mod's own code
 #define CBF_STEP(name)                                  \
     do {                                                \
         static bool cbfStepDone = false;                \
@@ -5715,6 +5716,8 @@ class $modify(BufPauseLayer, PauseLayer) {
     } while (false)
 
 $on_mod(Loaded) {
+    geode::log::info("startup step: bare test build, mod code skipped");
+    if (cbfBareTest) return;
     CBF_STEP("loaded: reading settings");
     buf.console = Mod::get()->getSettingValue<bool>("debug-console");
     buf.showPath = Mod::get()->getSettingValue<bool>("show-path");
@@ -6617,6 +6620,8 @@ namespace {
 }
 
 $on_mod(Loaded) {
+    geode::log::info("startup step: bare test build, mod code skipped");
+    if (cbfBareTest) return;
     CBF_STEP("loaded: keybinds");
     setupKeybinds();
     CBF_STEP("loaded: keybinds done");
@@ -6627,6 +6632,9 @@ $on_mod(Loaded) {
 // the main menu: a heart button that opens the menu (with the other buttons at the bottom),
 // and the update check
 class $modify(BufMenuLayer, MenuLayer) {
+    static void onModify(auto& self) {
+        for (auto& [cbfName, cbfHook] : self.m_hooks) { cbfHook->setAutoEnable(false); }
+    }
     bool init() {
         CBF_STEP("main menu: game's menu");
         if (!MenuLayer::init()) {
