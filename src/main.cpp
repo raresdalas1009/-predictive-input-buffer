@@ -5754,7 +5754,7 @@ $on_mod(Loaded) {
     if (Loader::get()->isModLoaded("square3ang.cbfextrapolate")) {
         say("CBF Extrapolate detected: visual only, predictions unaffected");
     }
-    say("v2.99.4 loaded. Stage key cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
+    say("v2.99.5 loaded. Stage key cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
 }
 
 class $modify(BufPlayLayer, PlayLayer) {
@@ -6288,6 +6288,10 @@ class $modify(BufPlayerObject, PlayerObject) {
         if (!ghostEffect()) PlayerObject::playBumpEffect(objectType, object);
     }
 
+    // v2.99.5: these 8 only hide ghost visuals (spawn flash, trails, spider run, rotations).
+    // Together they crash the iOS launcher without JIT on the loading screen (Geode's
+    // pre-patched helper), so iOS leaves them out; the buffer doesn't depend on them.
+#ifndef GEODE_IS_IOS
     void playSpawnEffect() {
         if (!ghostEffect()) PlayerObject::playSpawnEffect();
     }
@@ -6319,6 +6323,7 @@ class $modify(BufPlayerObject, PlayerObject) {
     void runNormalRotation(bool notNormalMode, float speed) {
         if (!ghostEffect()) PlayerObject::runNormalRotation(notNormalMode, speed);
     }
+#endif
 
     void toggleGhostEffect(GhostType type) {
         if (!ghostEffect()) PlayerObject::toggleGhostEffect(type);
