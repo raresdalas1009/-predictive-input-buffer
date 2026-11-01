@@ -5119,7 +5119,7 @@ private:
         shine->setPosition({ -40.f, H - TITLE });
         clip->addChild(shine, 5);
         shine->runAction(CCRepeatForever::create(CCSequence::create(CCDelayTime::create(2.5f),
-            CCEaseSineInOut::create(CCMoveBy::create(1.6f, { W + 40.f, 0.f })), CCPlace::create({ -40.f, H - TITLE }), nullptr)));
+            CCEaseSineInOut::create(CCMoveBy::create(1.6f, { W + 40.f, 0.f })), CCMoveTo::create(0.f, { -40.f, H - TITLE }), nullptr)));
         m_sky = clip;
 
         // edge, the sidebar's darker panel, the title's accent line
