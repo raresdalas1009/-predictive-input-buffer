@@ -5666,6 +5666,9 @@ public:
 // v2.75.1: the level complete screen no longer shows "Click Before Frames was on" or the
 // saves count in the top right corner; the attempt is still finished here.
 class $modify(BufEndLevelLayer, EndLevelLayer) {
+    static void onModify(auto& self) {
+        for (auto& [cbfName, cbfHook] : self.m_hooks) { cbfHook->setAutoEnable(false); }
+    }
     void customSetup() {
         EndLevelLayer::customSetup();
         benchFinish();  // a completed run is the best recording there is
@@ -5677,6 +5680,9 @@ class $modify(BufEndLevelLayer, EndLevelLayer) {
 // v2.94: the pause menu has a button for the menu again (v2.92 had dropped it, so on phones,
 // with no menu key, there was no way to open it inside a level)
 class $modify(BufPauseLayer, PauseLayer) {
+    static void onModify(auto& self) {
+        for (auto& [cbfName, cbfHook] : self.m_hooks) { cbfHook->setAutoEnable(false); }
+    }
     void customSetup() {
         PauseLayer::customSetup();
         auto* top = CCSprite::create("heart.png"_spr);
@@ -5748,6 +5754,7 @@ $on_mod(Loaded) {
 
 class $modify(BufPlayLayer, PlayLayer) {
     static void onModify(auto& self) {
+        for (auto& [cbfName, cbfHook] : self.m_hooks) { cbfHook->setAutoEnable(false); }
         (void)self.setHookPriority("PlayLayer::destroyPlayer", HOOK_PRIORITY);
         (void)self.setHookPriority("PlayLayer::playEndAnimationToPos", HOOK_PRIORITY);
     }
@@ -6042,6 +6049,9 @@ class $modify(BufPlayLayer, PlayLayer) {
 };
 
 class $modify(BufEditorLayer, LevelEditorLayer) {
+    static void onModify(auto& self) {
+        for (auto& [cbfName, cbfHook] : self.m_hooks) { cbfHook->setAutoEnable(false); }
+    }
     bool init(GJGameLevel* level, bool noUI) {
         bool ok = LevelEditorLayer::init(level, noUI);
         dropGhosts();
@@ -6051,6 +6061,7 @@ class $modify(BufEditorLayer, LevelEditorLayer) {
 
 class $modify(BufHardStreak, HardStreak) {
     static void onModify(auto& self) {
+        for (auto& [cbfName, cbfHook] : self.m_hooks) { cbfHook->setAutoEnable(false); }
         (void)self.setHookPriority("HardStreak::addPoint", HOOK_PRIORITY);
     }
 
@@ -6064,6 +6075,7 @@ class $modify(BufHardStreak, HardStreak) {
 
 class $modify(BufEffectGameObject, EffectGameObject) {
     static void onModify(auto& self) {
+        for (auto& [cbfName, cbfHook] : self.m_hooks) { cbfHook->setAutoEnable(false); }
         (void)self.setHookPriority("EffectGameObject::triggerObject", HOOK_PRIORITY);
     }
 
@@ -6102,6 +6114,7 @@ class $modify(BufEffectGameObject, EffectGameObject) {
 
 class $modify(BufGameObject, GameObject) {
     static void onModify(auto& self) {
+        for (auto& [cbfName, cbfHook] : self.m_hooks) { cbfHook->setAutoEnable(false); }
         (void)self.setHookPriority("GameObject::playShineEffect", HOOK_PRIORITY);
     }
 
@@ -6126,6 +6139,7 @@ class $modify(BufGameObject, GameObject) {
 // anyway, so ghosts skip the visuals.
 class $modify(BufRingObject, RingObject) {
     static void onModify(auto& self) {
+        for (auto& [cbfName, cbfHook] : self.m_hooks) { cbfHook->setAutoEnable(false); }
         (void)self.setHookPriority("RingObject::powerOnObject", HOOK_PRIORITY);
         (void)self.setHookPriority("RingObject::spawnCircle", HOOK_PRIORITY);
     }
@@ -6159,6 +6173,7 @@ class $modify(BufRingObject, RingObject) {
 
 class $modify(BufPlayerObject, PlayerObject) {
     static void onModify(auto& self) {
+        for (auto& [cbfName, cbfHook] : self.m_hooks) { cbfHook->setAutoEnable(false); }
         (void)self.setHookPriority("PlayerObject::playSpiderDashEffect", HOOK_PRIORITY);
         // v2.18: run before Click Between Frames, so this sees each physics tick once, with
         // its full dt, and CBF's mid-tick clicks arrive while inRealUpdate is set.
@@ -6690,6 +6705,7 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     }
 
     static void onModify(auto& self) {
+        for (auto& [cbfName, cbfHook] : self.m_hooks) { cbfHook->setAutoEnable(false); }
         (void)self.setHookPriority("GJBaseGameLayer::canBeActivatedByPlayer", HOOK_PRIORITY);
         (void)self.setHookPriority("GJBaseGameLayer::handleButton", HOOK_PRIORITY);
         (void)self.setHookPriority("GJBaseGameLayer::collisionCheckObjects", HOOK_PRIORITY);
