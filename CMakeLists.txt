@@ -1,4 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
+if ("${CMAKE_SYSTEM_NAME}" STREQUAL "iOS" OR IOS)
+    set(CMAKE_OSX_ARCHITECTURES "arm64")
+else()
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
+endif()
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -12,5 +17,11 @@ if (NOT DEFINED ENV{GEODE_SDK})
 endif()
 
 add_subdirectory($ENV{GEODE_SDK} ${CMAKE_CURRENT_BINARY_DIR}/geode)
+
+# iOS: Geode's generated bindings source uses FMOD types without including the FMOD header
+# (fixed in the bindings repo later); force-include it so the iOS build compiles
+if (("${CMAKE_SYSTEM_NAME}" STREQUAL "iOS" OR IOS) AND TARGET GeodeBindings)
+    target_compile_options(GeodeBindings PRIVATE -include Geode/fmod/fmod.hpp)
+endif()
 
 setup_geode_mod(${PROJECT_NAME})
