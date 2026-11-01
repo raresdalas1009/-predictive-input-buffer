@@ -8,8 +8,8 @@
 #define CBF_P3 1
 #define CBF_P4 0
 // P3 pairs: Q1 playSpawnEffect+createFadeOutDartStreak, Q2 fadeOutStreak2+playDynamicSpiderRun, Q3 animatePlatformerJump+runBallRotation, Q4 runBallRotation2+runNormalRotation
-#define CBF_Q1 1
-#define CBF_Q2 0
+#define CBF_Q1 0
+#define CBF_Q2 1
 #define CBF_Q3 0
 #define CBF_Q4 0
 // Click Before Frames v2.9 (cube-style wave, wave auto-release, orb alignment, full ghost state, drift check, in-game console on F9)
