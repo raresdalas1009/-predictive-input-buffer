@@ -1,5 +1,5 @@
 // iOS no-JIT hook test build: which hook groups are compiled in (1) or left out (0).
-#define CBF_HOOKS_PLAYER 0
+#define CBF_HOOKS_PLAYER 1
 #define CBF_HOOKS_GAME 0
 #define CBF_HOOKS_VISUAL 0
 // Click Before Frames v2.9 (cube-style wave, wave auto-release, orb alignment, full ghost state, drift check, in-game console on F9)
