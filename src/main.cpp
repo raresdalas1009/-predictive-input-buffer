@@ -7,6 +7,11 @@
 #define CBF_P2 0
 #define CBF_P3 1
 #define CBF_P4 0
+// P3 pairs: Q1 playSpawnEffect+createFadeOutDartStreak, Q2 fadeOutStreak2+playDynamicSpiderRun, Q3 animatePlatformerJump+runBallRotation, Q4 runBallRotation2+runNormalRotation
+#define CBF_Q1 1
+#define CBF_Q2 0
+#define CBF_Q3 0
+#define CBF_Q4 0
 // Click Before Frames v2.9 (cube-style wave, wave auto-release, orb alignment, full ghost state, drift check, in-game console on F9)
 //
 // When you click (or release, in wave / robot), a hidden "ghost" player is simulated
@@ -6305,37 +6310,53 @@ class $modify(BufPlayerObject, PlayerObject) {
 
 #endif // CBF_P2
 #if CBF_P3
+#if CBF_Q1
     void playSpawnEffect() {
         if (!ghostEffect()) PlayerObject::playSpawnEffect();
     }
+#endif
 
+#if CBF_Q1
     void createFadeOutDartStreak() {
         if (!ghostEffect()) PlayerObject::createFadeOutDartStreak();
     }
+#endif
 
+#if CBF_Q2
     void fadeOutStreak2(float duration) {
         if (!ghostEffect()) PlayerObject::fadeOutStreak2(duration);
     }
+#endif
 
+#if CBF_Q2
     void playDynamicSpiderRun() {
         if (!ghostEffect()) PlayerObject::playDynamicSpiderRun();
     }
+#endif
 
+#if CBF_Q3
     void animatePlatformerJump(float scale) {
         if (!ghostEffect()) PlayerObject::animatePlatformerJump(scale);
     }
+#endif
 
+#if CBF_Q3
     void runBallRotation(float speed) {
         if (!ghostEffect()) PlayerObject::runBallRotation(speed);
     }
+#endif
 
+#if CBF_Q4
     void runBallRotation2() {
         if (!ghostEffect()) PlayerObject::runBallRotation2();
     }
+#endif
 
+#if CBF_Q4
     void runNormalRotation(bool notNormalMode, float speed) {
         if (!ghostEffect()) PlayerObject::runNormalRotation(notNormalMode, speed);
     }
+#endif
 
 #endif // CBF_P3
 #if CBF_P4
