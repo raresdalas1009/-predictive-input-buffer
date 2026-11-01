@@ -1,3 +1,7 @@
+// iOS no-JIT hook test build: which hook groups are compiled in (1) or left out (0).
+#define CBF_HOOKS_PLAYER 0
+#define CBF_HOOKS_GAME 0
+#define CBF_HOOKS_VISUAL 0
 // Click Before Frames v2.9 (cube-style wave, wave auto-release, orb alignment, full ghost state, drift check, in-game console on F9)
 //
 // When you click (or release, in wave / robot), a hidden "ghost" player is simulated
@@ -6072,6 +6076,7 @@ class $modify(BufEditorLayer, LevelEditorLayer) {
     }
 };
 
+#if CBF_HOOKS_VISUAL
 class $modify(BufHardStreak, HardStreak) {
     static void onModify(auto& self) {
         (void)self.setHookPriority("HardStreak::addPoint", HOOK_PRIORITY);
@@ -6179,7 +6184,9 @@ class $modify(BufRingObject, RingObject) {
     }
 #endif
 };
+#endif // CBF_HOOKS_VISUAL
 
+#if CBF_HOOKS_PLAYER
 class $modify(BufPlayerObject, PlayerObject) {
     static void onModify(auto& self) {
         (void)self.setHookPriority("PlayerObject::playSpiderDashEffect", HOOK_PRIORITY);
@@ -6372,6 +6379,7 @@ class $modify(BufPlayerObject, PlayerObject) {
         PlayerObject::startDashing(ring);
     }
 };
+#endif // CBF_HOOKS_PLAYER
 
 // v2.81: Geode keybinds (mod settings or Geode's keybinds popup; work without F keys too).
 // Only act inside a level.
@@ -6675,6 +6683,7 @@ class $modify(BufMenuLayer, MenuLayer) {
 static bool tpsDriving = false;
 static double tpsCarry = 0.0;
 
+#if CBF_HOOKS_GAME
 class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     void update(float dt) {
         int tps = static_cast<int>(Mod::get()->getSettingValue<int64_t>("tps"));
@@ -7036,3 +7045,4 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
         GJBaseGameLayer::playerWillSwitchMode(player, object);
     }
 };
+#endif // CBF_HOOKS_GAME
