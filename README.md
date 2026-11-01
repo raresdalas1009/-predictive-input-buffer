@@ -85,3 +85,4 @@ Practice use only; do not use for verified or leaderboard runs.
 - v2.98: auto update fixed: the update popup now comes from the newest GitHub release (the same file 'Update now' installs), not from the code's version, which could be ahead of the release and made the install fail.
 - v2.99: iOS support. The iOS build needed the FMOD header forced into Geode's generated iOS bindings, arm64-only for iOS, and the menu's title shine no longer uses CCPlace (not available to mods on iOS).
 - v2.99.1: startup checkpoints in the Geode log (to find where some iPhones crash on start); the main menu button is skipped instead of crashing if its image is missing.
+- v2.99.2: iOS: the mod's file is now code-signed (ad-hoc), some iOS launchers refused to load it ("missing code signature").
