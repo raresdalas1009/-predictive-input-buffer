@@ -5729,7 +5729,7 @@ $on_mod(Loaded) {
     if (Loader::get()->isModLoaded("square3ang.cbfextrapolate")) {
         say("CBF Extrapolate detected: visual only, predictions unaffected");
     }
-    say("v2.97.0 loaded. Stage key cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
+    say("v2.98.0 loaded. Stage key cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
 }
 
 class $modify(BufPlayLayer, PlayLayer) {
@@ -6399,6 +6399,21 @@ namespace {
     constexpr bool INSTALL_UPDATES = true;
     constexpr char const* RELEASE_API = "https://api.github.com/repos/raresdalas1009/-predictive-input-buffer/releases/latest";
     bool updating = false;
+    std::string latestAssetUrl;  // v2.98: the .geode of the release the popup is about
+
+    // v2.98: the newest GitHub release and its .geode download (empty url if it has none)
+    std::string releaseAsset(matjson::Value const& release) {
+        auto assets = release["assets"];
+        if (assets.isArray()) {
+            for (auto const& asset : assets) {
+                auto name = asset["name"].asString().unwrapOr("");
+                if (name.size() > 6 && name.ends_with(".geode")) {
+                    return asset["browser_download_url"].asString().unwrapOr("");
+                }
+            }
+        }
+        return "";
+    }
 
     Result<VersionInfo> packageVersion(ByteVector const& data) {
         GEODE_UNWRAP_INTO(auto unzip, file::Unzip::create(ByteSpan(data)));
@@ -6440,32 +6455,24 @@ namespace {
         }
         updating = true;
         say("update: downloading...");
-        std::thread([] {
+        std::thread([url = latestAssetUrl]() mutable {
             auto fail = [](std::string why) {
                 queueInMainThread([why] { updateDone(false, why); });
             };
-            auto res = web::WebRequest()
-                .timeout(std::chrono::seconds(15))
-                .userAgent("ClickBeforeFrames")
-                .header("Accept", "application/vnd.github+json")
-                .getSync(RELEASE_API);
-            if (!res.ok()) {
-                return fail(fmt::format("Couldn't reach GitHub (error {}).", res.code()));
-            }
-            auto json = res.json();
-            if (json.isErr()) {
-                return fail("GitHub sent something unexpected.");
-            }
-            std::string url;
-            auto assets = json.unwrap()["assets"];
-            if (assets.isArray()) {
-                for (auto const& asset : assets) {
-                    auto name = asset["name"].asString().unwrapOr("");
-                    if (name.size() > 6 && name.ends_with(".geode")) {
-                        url = asset["browser_download_url"].asString().unwrapOr("");
-                        break;
-                    }
+            if (url.empty()) {
+                auto res = web::WebRequest()
+                    .timeout(std::chrono::seconds(15))
+                    .userAgent("ClickBeforeFrames")
+                    .header("Accept", "application/vnd.github+json")
+                    .getSync(RELEASE_API);
+                if (!res.ok()) {
+                    return fail(fmt::format("Couldn't reach GitHub (error {}).", res.code()));
                 }
+                auto json = res.json();
+                if (json.isErr()) {
+                    return fail("GitHub sent something unexpected.");
+                }
+                url = releaseAsset(json.unwrap());
             }
             if (url.empty()) {
                 return fail("The latest release has no .geode file yet.");
@@ -6522,10 +6529,15 @@ namespace {
             return;
         }
         updateChecked = true;
+        // v2.98: the check reads the newest GitHub release, the same file "Update now" installs
+        // (it used to read the code's version, which could be ahead of the newest release: the
+        // popup said "v2.97 is out" and the install then found only v2.95)
         std::thread([] {
             auto res = web::WebRequest()
                 .timeout(std::chrono::seconds(10))
-                .getSync("https://raw.githubusercontent.com/raresdalas1009/-predictive-input-buffer/main/mod.json");
+                .userAgent("ClickBeforeFrames")
+                .header("Accept", "application/vnd.github+json")
+                .getSync(RELEASE_API);
             if (!res.ok()) {
                 return;
             }
@@ -6533,17 +6545,35 @@ namespace {
             if (json.isErr()) {
                 return;
             }
-            auto version = json.unwrap()["version"].asString();
-            if (version.isErr()) {
+            auto release = json.unwrap();
+            std::string url = releaseAsset(release);
+            if (url.empty()) {
                 return;
             }
-            auto latest = VersionInfo::parse(version.unwrap());
+            auto latest = VersionInfo::parse(release["tag_name"].asString().unwrapOr(""));
+            if (latest.isErr()) {
+                latest = VersionInfo::parse(release["name"].asString().unwrapOr(""));
+            }
+            if (latest.isErr()) {
+                // a release named something else: the version inside its .geode decides
+                auto file = web::WebRequest()
+                    .timeout(std::chrono::seconds(60))
+                    .userAgent("ClickBeforeFrames")
+                    .followRedirects(true)
+                    .getSync(url);
+                if (!file.ok()) {
+                    return;
+                }
+                auto data = std::move(file).data();
+                latest = packageVersion(data);
+            }
             if (latest.isErr() || !(latest.unwrap() > Mod::get()->getVersion())) {
                 return;
             }
             std::string name = latest.unwrap().toVString();
-            queueInMainThread([name] {
+            queueInMainThread([name, url] {
                 latestVersion = name;
+                latestAssetUrl = url;
                 auto* scene = CCScene::get();
                 if (scene && scene->getChildByID("MenuLayer")) {
                     showUpdatePopup();
