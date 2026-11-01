@@ -1,12 +1,12 @@
 // iOS no-JIT hook test build: which hook groups are compiled in (1) or left out (0).
 #define CBF_HOOKS_PLAYER 1
-#define CBF_HOOKS_GAME 0
-#define CBF_HOOKS_VISUAL 0
+#define CBF_HOOKS_GAME 1
+#define CBF_HOOKS_VISUAL 1
 // player hook sub-groups: P1 update+incrementJumps, P2 circles+bump, P3 effects+rotations, P4 ghost/streak/spider dash/ringJump/startDashing
-#define CBF_P1 0
-#define CBF_P2 0
-#define CBF_P3 1
-#define CBF_P4 0
+#define CBF_P1 1
+#define CBF_P2 1
+#define CBF_P3 0
+#define CBF_P4 1
 // Click Before Frames v2.9 (cube-style wave, wave auto-release, orb alignment, full ghost state, drift check, in-game console on F9)
 //
 // When you click (or release, in wave / robot), a hidden "ghost" player is simulated
@@ -6305,37 +6305,53 @@ class $modify(BufPlayerObject, PlayerObject) {
 
 #endif // CBF_P2
 #if CBF_P3
+#if 0 // left out in this test
     void playSpawnEffect() {
         if (!ghostEffect()) PlayerObject::playSpawnEffect();
     }
+#endif
 
+#if 0 // left out in this test
     void createFadeOutDartStreak() {
         if (!ghostEffect()) PlayerObject::createFadeOutDartStreak();
     }
+#endif
 
+#if 0 // left out in this test
     void fadeOutStreak2(float duration) {
         if (!ghostEffect()) PlayerObject::fadeOutStreak2(duration);
     }
+#endif
 
+#if 0 // left out in this test
     void playDynamicSpiderRun() {
         if (!ghostEffect()) PlayerObject::playDynamicSpiderRun();
     }
+#endif
 
+#if 0 // left out in this test
     void animatePlatformerJump(float scale) {
         if (!ghostEffect()) PlayerObject::animatePlatformerJump(scale);
     }
+#endif
 
+#if 0 // left out in this test
     void runBallRotation(float speed) {
         if (!ghostEffect()) PlayerObject::runBallRotation(speed);
     }
+#endif
 
+#if 0 // left out in this test
     void runBallRotation2() {
         if (!ghostEffect()) PlayerObject::runBallRotation2();
     }
+#endif
 
+#if 0 // left out in this test
     void runNormalRotation(bool notNormalMode, float speed) {
         if (!ghostEffect()) PlayerObject::runNormalRotation(notNormalMode, speed);
     }
+#endif
 
 #endif // CBF_P3
 #if CBF_P4
