@@ -737,8 +737,7 @@ namespace {
         // hidden in practice mode (practice runs can't be submitted, and on phones it sat on the
         // checkpoint buttons); always shown in normal mode while the buffer is on
         auto* layer = GameManager::get()->m_playLayer;
-        buf.watermark->setVisible(buf.enabled && !(layer && layer->m_isPracticeMode));
-        buf.watermark->setString(fmt::format("CBF  |  {}", stageText()).c_str());
+        buf.watermark->setVisible(false);
     }
 
     void refreshAutoTag() {
@@ -5899,21 +5898,7 @@ class $modify(BufPlayLayer, PlayLayer) {
         this->addChild(buf.panel);
         refreshPanel();
 
-        // v2.95: the watermark is back (v2.92 had dropped it), shorter and smaller than before;
-        // on phones smaller still, so it doesn't sit on the touch controls
-#ifdef GEODE_IS_MOBILE
-        constexpr float WATERMARK_SCALE = 0.18f;
-#else
-        constexpr float WATERMARK_SCALE = 0.22f;
-#endif
-        buf.watermark = CCLabelBMFont::create("", "bigFont.fnt");
-        buf.watermark->setScale(WATERMARK_SCALE);
-        buf.watermark->setColor({ 150, 205, 255 });
-        buf.watermark->setOpacity(150);
-        buf.watermark->setAnchorPoint({ 0.f, 0.f });
-        buf.watermark->setPosition({ 4.f, 3.f });
-        buf.watermark->setZOrder(1000);
-        this->addChild(buf.watermark);
+        // watermark removed: label is no longer created (buf.watermark stays nullptr)
         buf.usedThisAttempt = false;
         refreshWatermark();
 
