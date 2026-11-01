@@ -45,25 +45,23 @@ jobs:
     runs-on: ubuntu-latest
     needs: ['build']
     steps:
-      - uses: geode-sdk/build-geode-mod/combine@main
-        id: build
+      - uses: actions/download-artifact@v4
         with:
-          delete-artifacts: false
-      - name: Show merge errors
-        if: failure()
+          path: artifacts
+      - name: Merge (diagnostic)
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          G=$(command -v geode || true)
-          D=$(dirname "$G")
-          find "$D/artifacts" -type f | sed 's/^/::notice::/' | head -20
-          FILES=$(find "$D/artifacts" -name '*.geode' -type f | tr '\n' ' ')
-          mkdir -p /tmp/out
-          "$G" package merge $FILES 2>&1 | tail -15 | sed 's/^/::error::/' || true
-          for f in $FILES; do unzip -l "$f" | awk '{print $4}' | grep -v '^$' | tr '\n' ' ' | sed "s#^#::notice::$(basename $(dirname $f)): #"; echo; done
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Build Output
-          path: ${{ steps.build.outputs.build-output }}
+          set +e
+          find artifacts -type f | sed 's/^/::notice::file /'
+          gh release download -R geode-sdk/cli -p '*-linux.zip' -O cli.zip 2>&1 | sed 's/^/::notice::cli /'
+          unzip -o -q cli.zip -d cli; chmod +x cli/geode
+          ./cli/geode --version 2>&1 | sed 's/^/::notice::cli version /'
+          FILES=$(find artifacts -name '*.geode' -type f | tr '\n' ' ')
+          echo "::notice::merging $FILES"
+          ./cli/geode package merge $FILES 2>&1 | tail -20 | sed 's/^/::error::merge /'
+          for f in $FILES; do echo "::notice::$f: $(unzip -l "$f" | awk 'NR>3{print $4}' | grep -v '^$' | tr '\n' ' ')"; done
   release:
     name: Publish release
     runs-on: ubuntu-latest
