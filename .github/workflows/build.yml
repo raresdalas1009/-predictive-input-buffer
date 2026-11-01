@@ -19,6 +19,9 @@ jobs:
           target: Android64
         - name: macOS
           os: macos-latest
+        - name: iOS
+          os: macos-latest
+          target: iOS
     name: ${{ matrix.config.name }}
     runs-on: ${{ matrix.config.os }}
     steps:
@@ -28,6 +31,13 @@ jobs:
         with:
           sdk: given  # the Geode version in mod.json
           cli: latest
+      - name: Show compile errors
+        if: failure()
+        shell: bash
+        run: |
+          for d in build*/ ; do
+            cmake --build "$d" 2>&1 | grep -E "error" | head -25 | sed 's/^/::error::/' || true
+          done
           combine: true
           target: ${{ matrix.config.target }}
   package:
