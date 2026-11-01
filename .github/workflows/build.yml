@@ -47,6 +47,19 @@ jobs:
     steps:
       - uses: geode-sdk/build-geode-mod/combine@main
         id: build
+        with:
+          delete-artifacts: false
+      - name: Show merge errors
+        if: failure()
+        shell: bash
+        run: |
+          G=$(command -v geode || true)
+          D=$(dirname "$G")
+          find "$D/artifacts" -type f | sed 's/^/::notice::/' | head -20
+          FILES=$(find "$D/artifacts" -name '*.geode' -type f | tr '\n' ' ')
+          mkdir -p /tmp/out
+          "$G" package merge $FILES 2>&1 | tail -15 | sed 's/^/::error::/' || true
+          for f in $FILES; do unzip -l "$f" | awk '{print $4}' | grep -v '^$' | tr '\n' ' ' | sed "s#^#::notice::$(basename $(dirname $f)): #"; echo; done
       - uses: actions/upload-artifact@v4
         with:
           name: Build Output
