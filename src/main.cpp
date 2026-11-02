@@ -5754,7 +5754,7 @@ $on_mod(Loaded) {
     if (Loader::get()->isModLoaded("square3ang.cbfextrapolate")) {
         say("CBF Extrapolate detected: visual only, predictions unaffected");
     }
-    say("v2.99.5 loaded. Stage key cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
+    say("v2.99.6 loaded. Stage key cycles: 0.5f -> 1f -> 2f -> 4f -> 6f -> 8f -> custom -> off");
 }
 
 class $modify(BufPlayLayer, PlayLayer) {
@@ -5815,6 +5815,14 @@ class $modify(BufPlayLayer, PlayLayer) {
     }
 
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
+        // v2.99.6: the last level was replaced without being quit (seen with Versus, which
+        // opens levels on its own). Its nodes are already freed, and the new level can even
+        // be created at the same address, so `buf.owner == this` matched during loading and
+        // resetLevel touched the old level's freed nodes (crash reading 0xFFFFFFFFFFFFFFFF).
+        // Forget all of it before the game starts loading, without touching any of it.
+        if (buf.owner) {
+            forgetLeftLevel();
+        }
         if (!PlayLayer::init(level, useReplay, dontCreateObjects)) {
             return false;
         }
@@ -5980,6 +5988,23 @@ class $modify(BufPlayLayer, PlayLayer) {
         forgetPress();
         buf.owner = this;
         return true;
+    }
+
+    // v2.99.6: a level that went away without onQuit. Its nodes may be freed, so they're only
+    // forgotten (never touched). The ghosts are let go of the same way (like Android): they
+    // still point at the old level, so deleting them isn't safe.
+    static void forgetLeftLevel() {
+        benchFinish();
+        benchRecording = false;
+        saveMemory();
+        restoreGlobals();
+        memoryKey.clear();
+        buf.hintLabel = nullptr;
+        buf.heatNode = nullptr;
+        buf.ghost1 = nullptr;
+        buf.ghost2 = nullptr;
+        buf.ghostLayer = nullptr;
+        dropGhosts();  // with the ghosts gone this only clears pointers and state
     }
 
     void onQuit() {
