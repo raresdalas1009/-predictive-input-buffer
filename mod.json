@@ -6,7 +6,7 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"version": "v2.99.6",
+	"version": "v2.99.7",
 	"id": "basu.input-buffer",
 	"name": "Click Before Frames",
 	"developer": "BASU",
@@ -186,7 +186,7 @@
 		"auto-click": {
 			"type": "bool",
 			"name": "Auto-click (clicks for you)",
-			"description": "When you're not holding and doing nothing would crash within the auto-release window, but a click right now (with your usual hold) is fully safe, the mod clicks for you. Your own click, if it still comes, is ignored. Cube, ball, UFO, robot, spider and swing (not wave / ship). Practice mode only, unless 'Auto-release in normal runs' is on; then AUTO INPUTS ON shows on screen. Runs with this aren't legit.",
+			"description": "When you're not holding and doing nothing would crash within the auto-release window, but a click right now (with your usual hold) is fully safe, the mod clicks for you. Your own click, if it still comes, is ignored. Cube, ball, UFO, robot, spider and swing (not wave / ship). Practice mode only, unless 'Auto-release in normal runs' is on. Runs with this aren't legit.",
 			"default": false
 		},
 		"level-memory": {
@@ -198,7 +198,7 @@
 		"auto-release-normal-runs": {
 			"type": "bool",
 			"name": "Auto-release in normal runs",
-			"description": "Let auto-release (wave / robot / dash) and auto-click also work outside practice mode. While they can act, an 'AUTO INPUTS ON' tag is shown on screen. Never use it for verified or leaderboard runs.",
+			"description": "Let auto-release (wave / robot / dash) and auto-click also work outside practice mode. Never use it for verified or leaderboard runs.",
 			"default": false
 		},
 		"spider-smart": {

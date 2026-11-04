@@ -90,3 +90,4 @@ Practice use only; do not use for verified or leaderboard runs.
 - v2.99.4: iOS: the purple heart button in the pause menu was missing (the game builds the pause menu differently on iOS), it is now also added when the game pauses.
 - v2.99.5: iOS without JIT works: 8 ghost-visual hooks that crashed the no-JIT launcher on the loading screen are left out on iOS (no effect on buffering; other platforms unchanged).
 - v2.99.6: pause menu button removed (the purple heart in the pause menu is gone; inside a level the menu opens with the menu key, default 7; the main menu heart button is unchanged).
+- v2.99.7: no more on-screen indicators: the "CBF | stage" watermark and the "AUTO INPUTS ON" tag are removed.

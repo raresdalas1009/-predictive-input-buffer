@@ -285,8 +285,6 @@ namespace {
         bool robotSmart = true;      // v2.12: robot presses count as safe if some hold length survives
         bool robotAutoRelease = false;  // v2.12: robot auto-release (practice mode only)
         bool autoNormalRuns = false; // v2.14: let auto-release work outside practice too
-        CCLabelBMFont* autoTag = nullptr;  // v2.14: on-screen "AUTO-RELEASE ON" tag
-        CCLabelBMFont* watermark = nullptr;  // v2.46: always-on "Click Before Frames" label while the buffer is on
         bool usedThisAttempt = false;      // v2.46: the buffer was on at some point of this attempt
         bool learn = true;           // v2.13: per-level memory learned from your runs
         bool fullState = true;       // v2.11.1: copy the full v2.8 player state into the ghost
@@ -726,30 +724,6 @@ namespace {
         }
     }
 
-    // v2.14: a run outside practice where auto-release can press for you is marked on screen.
-    // v2.46 watermark: whenever the buffer is on (any stage but OFF) the level shows it, and
-    // can't be turned off, so runs made with the mod are recognisable.
-    void refreshWatermark() {
-        if (!buf.watermark) {
-            return;
-        }
-        // hidden in practice mode (practice runs can't be submitted, and on phones it sat on the
-        // checkpoint buttons); always shown in normal mode while the buffer is on
-        auto* layer = GameManager::get()->m_playLayer;
-        buf.watermark->setVisible(buf.enabled && !(layer && layer->m_isPracticeMode));
-        buf.watermark->setString(fmt::format("CBF  |  {}", stageText()).c_str());
-    }
-
-    void refreshAutoTag() {
-        if (!buf.autoTag) {
-            return;
-        }
-        auto* layer = GameManager::get()->m_playLayer;
-        bool on = buf.enabled && buf.autoNormalRuns && (buf.autoRelease || buf.robotAutoRelease || buf.dashAutoRelease || buf.autoClick) &&
-            layer && !layer->m_isPracticeMode;
-        buf.autoTag->setVisible(on);
-    }
-
     size_t memorySpots();
 
     // v2.29 F8: copy the console to the clipboard (and save it to console-export.txt in the
@@ -836,8 +810,6 @@ namespace {
         buf.panelTitle = nullptr;
         buf.panelLines.clear();
         buf.pathNode = nullptr;
-        buf.autoTag = nullptr;
-        buf.watermark = nullptr;
         buf.simulating = false;
         buf.injecting = false;
         buf.rapid = 0;
@@ -4565,8 +4537,6 @@ namespace {
         saveProfile();
         Mod::get()->setSavedValue("stage", buf.stage);  // v2.58: one stage for every level, kept on restart
         say("Stage (6) -> {}", stageText());
-        refreshAutoTag();
-        refreshWatermark();
         refreshPanel();
     }
 
@@ -4629,7 +4599,7 @@ namespace {
     }
 
     // v2.80 auto-click (off by default; practice mode only unless 'Auto-release in normal
-    // runs' is on, then the AUTO INPUTS ON tag shows): while you're not holding, check every
+    // runs' is on): while you're not holding, check every
     // step whether doing nothing crashes within the auto window. If it does and a click right
     // now (with your usual hold) is fully safe, the mod clicks for you, lets go after that
     // hold, and swallows your own click if it still comes. Cube, ball, UFO, robot, spider and
@@ -5502,8 +5472,6 @@ private:
             readSettings();
             saveProfile();
             refreshHeatmap();
-            refreshWatermark();
-            refreshAutoTag();
         }
         else {
             buf.showPath = value;
@@ -5539,7 +5507,6 @@ private:
     void onPerMode(CCObject*) {
         buf.perMode = !buf.perMode;
         saveModeTicks();
-        refreshWatermark();
         refreshPanel();
         say("per-mode frames {}", buf.perMode ? "on" : "off");
         rebuildPage();
@@ -5583,7 +5550,6 @@ private:
         resetPending();
         applyStage();
         readSettings();
-        refreshWatermark();
         refreshPanel();
         say("preset: {} -> {}", which == 0 ? "Safe" : which == 1 ? "Balanced" : "Aggressive", stageText());
         rebuildPage();
@@ -5889,33 +5855,7 @@ class $modify(BufPlayLayer, PlayLayer) {
         this->addChild(buf.panel);
         refreshPanel();
 
-        // v2.95: the watermark is back (v2.92 had dropped it), shorter and smaller than before;
-        // on phones smaller still, so it doesn't sit on the touch controls
-#ifdef GEODE_IS_MOBILE
-        constexpr float WATERMARK_SCALE = 0.18f;
-#else
-        constexpr float WATERMARK_SCALE = 0.22f;
-#endif
-        buf.watermark = CCLabelBMFont::create("", "bigFont.fnt");
-        buf.watermark->setScale(WATERMARK_SCALE);
-        buf.watermark->setColor({ 150, 205, 255 });
-        buf.watermark->setOpacity(150);
-        buf.watermark->setAnchorPoint({ 0.f, 0.f });
-        buf.watermark->setPosition({ 4.f, 3.f });
-        buf.watermark->setZOrder(1000);
-        this->addChild(buf.watermark);
         buf.usedThisAttempt = false;
-        refreshWatermark();
-
-        buf.autoTag = CCLabelBMFont::create("AUTO INPUTS ON", "bigFont.fnt");
-        buf.autoTag->setScale(0.24f);
-        buf.autoTag->setColor({ 255, 120, 120 });
-        buf.autoTag->setOpacity(153);  // 60%, like the console; still readable in a recording
-        buf.autoTag->setAnchorPoint({ 1.f, 0.f });
-        buf.autoTag->setPosition({ win.width - 6.f, 4.f });
-        buf.autoTag->setZOrder(1000);
-        this->addChild(buf.autoTag);
-        refreshAutoTag();
 
         buf.hintLabel = CCLabelBMFont::create("", "bigFont.fnt");
         buf.hintLabel->setColor({ 255, 170, 215 });
@@ -5980,7 +5920,6 @@ class $modify(BufPlayLayer, PlayLayer) {
         }
         resetPending();
         forgetPress();
-        refreshAutoTag();
         if (buf.pathNode) {
             buf.pathNode->clear();
         }
@@ -5993,12 +5932,6 @@ class $modify(BufPlayLayer, PlayLayer) {
         // pressed for you as the attempt started (the cube jumped by itself until you clicked).
         // Now the mod only presses when you press.
         syncHeld(this);
-    }
-
-    void togglePracticeMode(bool practiceMode) {
-        PlayLayer::togglePracticeMode(practiceMode);
-        refreshWatermark();
-        refreshAutoTag();
     }
 
     void playEndAnimationToPos(CCPoint position) {
