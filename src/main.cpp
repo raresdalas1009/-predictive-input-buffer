@@ -214,7 +214,8 @@ namespace {
         bool orbClick = true;        // v2.4: orb choice of the current run
         bool touchedOrb = false;     // v2.4: the current run touched an orb
         bool fullHorizon = false;
-        std::vector<int> const* plan = nullptr;  // v3.0 autoplay: ticks (from now) at which the ghost flips its button    // v3.0 autoplay: only surviving the whole look-ahead counts (no "landed = safe")
+        std::vector<int> const* plan = nullptr;  // v3.0 autoplay: ticks (from now) at which the ghost flips its button
+        std::vector<std::pair<void*, int>> orbTouches;  // v3.0 test 8: orbs the planning ghost touched, and when    // v3.0 autoplay: only surviving the whole look-ahead counts (no "landed = safe")
         bool skipPress = false;      // v2.4: run without pressing anything (auto-release hold check)
         bool avoidMovers = true;     // v2.4: don't buffer when the ghost's path has moving objects
         bool sawMover = false;       // v2.4: a run this decision touched a moving object
@@ -4620,6 +4621,18 @@ namespace {
         double frameMs = 0.0;
         std::chrono::steady_clock::time_point searchStart {};
         double searchCap = 0.0;
+        // v3.0 test 8: it learns the level (normal mode). Each attempt's inputs are kept; after a
+        // death the ones up to a bit before it are replayed exactly next attempt, and the search
+        // only runs past them. Dying at the same spot again and again forgets further back.
+        int attemptTick = 0;
+        std::vector<int> attemptFlips;
+        std::vector<int> known;
+        int knownUntil = 0;
+        size_t replayIdx = 0;
+        bool userTouched = false;
+        int lastDeath = -1;
+        int sameDeaths = 0;
+        bool diedThisAttempt = false;  // noclip (Mega Hack) calls "death" every tick: count one
         CCLabelBMFont* tag = nullptr;
     };
     Autoplay autoplay;
@@ -4669,6 +4682,8 @@ namespace {
         autoplay = {};
         autoplay.active = true;
         autoplay.layer = layer;
+        // started mid-run: this attempt's ticks don't count from the level start, so it isn't learned
+        autoplay.userTouched = true;
         resetPending();
         auto win = CCDirector::get()->getWinSize();
         autoplay.takeOver = Mod::get()->getSavedValue<bool>("autoplay-takeover", false);
@@ -4695,15 +4710,26 @@ namespace {
         PlayerObject* p2;
         bool dual;
         int horizon;
+        bool held0;     // the button now
+        bool holdMode;  // wave / ship: holding is a real choice; other modes default to let go
     };
 
+    // the ghost runs the plan; orbs are only clicked by the plan itself (v3.0 test 8: "assume
+    // orbs" made the ghost click every orb on its own, so plans counted on orb clicks the real
+    // autoplay never made)
     int simulatePlan(PlanCtx const& c, std::vector<int> const& rel) {
         SimEnd end;
+        bool orbClick = buf.orbClick, orbAfter = buf.orbAfterFirst;
+        buf.orbClick = false;
+        buf.orbAfterFirst = false;
+        buf.orbTouches.clear();
         buf.plan = &rel;
         buf.skipPress = true;
         int survived = simulate(c.layer, c.p1, c.p2, c.dual, 0, true, c.horizon, -1, c.horizon, &end);
         buf.skipPress = false;
         buf.plan = nullptr;
+        buf.orbClick = orbClick;
+        buf.orbAfterFirst = orbAfter;
         ++autoplay.sims;
         return survived;
     }
@@ -4728,6 +4754,32 @@ namespace {
             return survived;
         }
         int last = rel.empty() ? -1 : rel.back();
+        // orbs touched before the crash: try a tap right on them first (a press while touching it)
+        std::vector<int> orbTicks;
+        for (auto const& [r, t] : buf.orbTouches) {
+            if (t > last && t <= survived && orbTicks.size() < 2) {
+                orbTicks.push_back(t);
+            }
+        }
+        for (int ot : orbTicks) {
+            bool heldThen = c.held0 != (rel.size() % 2 == 1);
+            size_t before = rel.size();
+            if (heldThen) {
+                rel.push_back(ot);  // let go, then press again on the orb
+                rel.push_back(ot + 1);
+            }
+            else {
+                rel.push_back(ot);
+            }
+            if (!c.holdMode) {
+                rel.push_back(rel.back() + st(4));  // and let go again: a tap
+            }
+            int r = planSearch(c, rel, depth - 1, budget, best, bestLen);
+            rel.resize(before);
+            if (r >= c.horizon || autoplay.sims >= budget) {
+                return r;
+            }
+        }
         for (int back : { 1, 3, 6, 10, 15, 22, 30 }) {
             int t = survived - st(back);
             if (t <= last) {
@@ -4754,6 +4806,51 @@ namespace {
         return survived;
     }
 
+    void autoplayFlip(PlayLayer* layer) {
+        sendButton(layer, !buf.appliedInput);
+        ++autoplay.inputs;
+        autoplay.attemptFlips.push_back(autoplay.attemptTick - 1);
+    }
+
+    // a new attempt: the learned inputs are replayed from the start again
+    void autoplayAttemptStart() {
+        autoplay.attemptTick = 0;
+        autoplay.attemptFlips.clear();
+        autoplay.plan.clear();
+        autoplay.verifyAt = -1;
+        autoplay.replayIdx = 0;
+        autoplay.userTouched = false;
+        autoplay.diedThisAttempt = false;
+    }
+
+    // a death: keep this attempt's inputs up to a bit before it (normal mode, bot-only attempts)
+    void autoplayDied(PlayLayer* layer) {
+        if (layer->m_isPracticeMode || autoplay.userTouched || autoplay.diedThisAttempt) {
+            return;
+        }
+        autoplay.diedThisAttempt = true;
+        int reached = autoplay.attemptTick;
+        if (autoplay.lastDeath >= 0 && std::abs(reached - autoplay.lastDeath) < st(30)) {
+            ++autoplay.sameDeaths;
+        }
+        else {
+            autoplay.sameDeaths = 0;
+        }
+        autoplay.lastDeath = reached;
+        // stuck at one spot: forget further back each time, so a different route gets tried
+        int keepUntil = reached - st(60) - autoplay.sameDeaths / 2 * st(90);
+        if (keepUntil > autoplay.knownUntil || autoplay.sameDeaths >= 2) {
+            autoplay.knownUntil = std::max(0, keepUntil);
+            autoplay.known.clear();
+            for (int f : autoplay.attemptFlips) {
+                if (f < autoplay.knownUntil) {
+                    autoplay.known.push_back(f);
+                }
+            }
+            say("autoplay remembers {} inputs ({} ticks of this level)", autoplay.known.size(), autoplay.knownUntil);
+        }
+    }
+
     void autoplayTick(PlayLayer* layer, PlayerObject* p1) {
         if (!autoplay.active || autoplay.layer != layer || p1->m_isDead || !buf.ghost1 || buf.owner != layer) {
             return;
@@ -4765,15 +4862,28 @@ namespace {
             return;
         }
         resetPending();
+        int at = autoplay.attemptTick++;
+        // what it learned in earlier attempts: replayed exactly, no searching
+        if (!layer->m_isPracticeMode && at < autoplay.knownUntil) {
+            while (autoplay.replayIdx < autoplay.known.size() && autoplay.known[autoplay.replayIdx] <= at) {
+                if (autoplay.known[autoplay.replayIdx] == at) {
+                    autoplayFlip(layer);
+                }
+                ++autoplay.replayIdx;
+            }
+            return;
+        }
         bool dual = layer->m_gameState.m_isDualMode && layer->m_player2;
-        PlanCtx c { layer, p1, dual ? layer->m_player2 : nullptr, dual, st(120) };
+        auto* p2 = dual ? layer->m_player2 : nullptr;
+        bool holdMode = p1->m_isDart || p1->m_isShip || (p2 && (p2->m_isDart || p2->m_isShip));
+        PlanCtx c { layer, p1, p2, dual, st(120), buf.appliedInput, holdMode };
 
         // follow the plan: flips due now
         while (!autoplay.plan.empty() && autoplay.plan.front() <= tickCount) {
             autoplay.plan.erase(autoplay.plan.begin());
-            sendButton(layer, !buf.appliedInput);
-            ++autoplay.inputs;
+            autoplayFlip(layer);
         }
+        c.held0 = buf.appliedInput;
         if (tickCount < autoplay.verifyAt) {
             return;
         }
@@ -4808,9 +4918,13 @@ namespace {
                 std::vector<int> ext = rel;
                 planSearch(c, ext, 4, budget, best, bestLen);
             }
-            // 2. if that didn't do it, a fresh plan, fewest flips first
+            // 2. if that didn't do it, a fresh plan, fewest flips first. Outside wave / ship the plan
+            // starts by letting go: holding in cube, ball, UFO... means jumping again and again.
             for (int depth = 1; depth <= 8 && bestLen < c.horizon && autoplay.sims < budget && !planOutOfTime(); ++depth) {
                 std::vector<int> start;
+                if (c.held0 && !c.holdMode) {
+                    start.push_back(0);
+                }
                 planSearch(c, start, depth, budget, best, bestLen);
             }
             changed = best != rel;
@@ -4829,8 +4943,7 @@ namespace {
             // flips due right now
             while (!autoplay.plan.empty() && autoplay.plan.front() <= tickCount) {
                 autoplay.plan.erase(autoplay.plan.begin());
-                sendButton(layer, !buf.appliedInput);
-                ++autoplay.inputs;
+                autoplayFlip(layer);
             }
         }
         // a working plan is re-checked now and then (moving things can change); one that still
@@ -6451,6 +6564,7 @@ class $modify(BufPlayLayer, PlayLayer) {
     void destroyPlayer(PlayerObject* player, GameObject* object) {
         if (autoplay.active && !buf.simulating && player == m_player1 && !player->m_isDead) {
             say("autoplay died at {:.1f}% ({} inputs)", getCurrentPercent(), autoplay.inputs);
+            autoplayDied(this);
         }
         if (buf.simulating && isGhost(player)) {
             buf.ghostDied = true;
@@ -6743,6 +6857,9 @@ class $modify(BufPlayLayer, PlayLayer) {
         // pressed for you as the attempt started (the cube jumped by itself until you clicked).
         // Now the mod only presses when you press.
         syncHeld(this);
+        if (autoplay.active) {
+            autoplayAttemptStart();
+        }
     }
 
     // v2.99.4: see addPauseButton (iOS never ran the PauseLayer::customSetup hook)
@@ -7607,6 +7724,7 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
                 return;
             }
             autoplay.userUntil = tickCount + st(down ? 90 : 60);
+            autoplay.userTouched = true;
             autoplay.plan.clear();
             autoplay.verifyAt = -1;
         }
@@ -7659,6 +7777,15 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
         // v2.2 calculation mode: assume you click every orb you touch, on time. Without
         // this the ghost (which only has the one click being tested) misses the next orb in a
         // chain, falls, and the mod thinks a perfectly good click is a death.
+        if (buf.simulating && buf.plan && player == buf.ghost1) {
+            bool seen = false;
+            for (auto const& [r, t] : buf.orbTouches) {
+                seen = seen || r == ring;
+            }
+            if (!seen) {
+                buf.orbTouches.push_back({ ring, buf.simTick });
+            }
+        }
         bool autoOrb = buf.orbClick || (buf.orbAfterFirst && buf.orbUsedTick >= 0 && !buf.orbsUsed.contains(ring));
         if (buf.simulating && autoOrb) {
             bool first = player == buf.ghost1;
