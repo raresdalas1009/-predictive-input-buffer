@@ -5519,6 +5519,10 @@ namespace {
         int bestT = -1;  // test 29: the input that got furthest so far in this search
         int bestV = 0;
         int bestEnd = 0;
+        int sprintTests = 0;  // test 41: what the search did, for the "stuck" report
+        int orbTries = 0;
+        int orbBest = 0;
+        int lowest = INT_MAX;
         int orbT = -1;  // test 38: an input whose path reaches an orb the route hadn't touched
         int orbV = 0;
         int orbEnd = 0;
@@ -5781,6 +5785,34 @@ namespace {
         if (routeReports < 16) {
             ++routeReports;
             say("route stuck {:.1f} s ahead: {}", (route.death - tickCount) / static_cast<double>(st(240)), why);
+            // v3.0 test 41: what it was doing there, to see which move it never tries
+            int k = route.death - route.posBase - 1;
+            CCPoint at = k >= 0 && k < static_cast<int>(route.pos.size()) ? route.pos[k] : CCPoint {};
+            auto const& cp = routeCpAtOrBefore(route.death);
+            char const* mode = cp.snap->m_isShip ? "ship" : cp.snap->m_isDart ? "wave" : cp.snap->m_isBall ? "ball" : cp.snap->m_isBird ? "UFO"
+                : cp.snap->m_isRobot ? "robot" : cp.snap->m_isSpider ? "spider" : cp.snap->m_isSwing ? "swing" : "cube";
+            int orbsNear = 0;
+            std::string orbList;
+            int b = static_cast<int>(std::floor(at.x / 64.f));
+            for (int kk = b - 8; kk <= b + 2; ++kk) {
+                auto it = buf.objIndex.find(kk);
+                if (it == buf.objIndex.end()) {
+                    continue;
+                }
+                for (auto* o : it->second) {
+                    if (typeinfo_cast<RingObject*>(o) && o->m_positionX > at.x - 500.f && o->m_positionX < at.x + 120.f) {
+                        ++orbsNear;
+                        if (orbsNear <= 6) {
+                            orbList += fmt::format(" {}@{:.0f},{:.0f}", o->m_objectID, o->m_positionX, o->m_positionY);
+                        }
+                    }
+                }
+            }
+            say("  stuck detail: dies at x {:.0f} y {:.0f} as {} (button {} before it); searched back to {:.2f} s before, {} tests; "
+                "furthest any input got: {} ticks past it; orbs near (id@x,y): {}{}; touched on the way: {}; orb clicks tried {}, best {} ticks past",
+                at.x, at.y, mode, routeHeldAt(route.death) ? "held" : "let go",
+                route.lowest == INT_MAX ? 0.0 : (route.death - route.lowest) / static_cast<double>(st(240)), route.sprintTests,
+                route.bestEnd - route.death, orbsNear, orbList, route.orbRanges.size(), route.orbTries, route.orbBest);
         }
     }
 
@@ -5801,6 +5833,10 @@ namespace {
         route.bestEnd = death;
         route.orbT = -1;
         route.orbEnd = 0;
+        route.sprintTests = 0;
+        route.orbTries = 0;
+        route.orbBest = 0;
+        route.lowest = INT_MAX;
         route.orbFirst.clear();
         route.orbRanges.clear();
     }
@@ -5909,6 +5945,8 @@ namespace {
                 int cpTick = cp.tick;
                 int length = route.death - cpTick + routeNeeded(t);
                 int lived = routeSim(layer, p1, cp, routeWith(t, tapMode), length, false);
+                ++route.orbTries;
+                route.orbBest = std::max(route.orbBest, cpTick + lived - route.death);
                 if (lived >= length) {
                     routeAccept(layer, p1, t, t, 0);  // the orb's middle gets through: taken as it is
                     return;
@@ -5957,6 +5995,8 @@ namespace {
         int length = route.death - cpTick + routeNeeded(t);
         int lived = routeSim(layer, p1, cp, flips, length, false);
         bool ok = lived >= length;
+        ++route.sprintTests;
+        route.lowest = std::min(route.lowest, t);
         if (!ok) {
             // v3.0 test 38: does this input's path reach an orb (touched after the input)? Then the
             // next search can click that orb (51% of Stereo Madness: a jump, then the orb above the
@@ -8122,7 +8162,7 @@ class $modify(BufPlayLayer, PlayLayer) {
         if (autoplay.active && !buf.simulating && player == m_player1 && !player->m_isDead && object != m_anticheatSpike &&
             !autoplay.diedThisAttempt) {
             int at = autoplay.attemptTick;
-            bool replaying = !m_isPracticeMode && autoplay.knownUntil > 0 && at <= autoplay.knownUntil;
+            bool replaying = !m_isPracticeMode && autoplay.knowsWholeLevel && autoplay.knownUntil > 0 && at <= autoplay.knownUntil;
             bool expected = autoplay.planSafeUntil > at + 2;
             say("autoplay died at {:.1f}% as {} (tick {}): {}", getCurrentPercent(), MODE_NAMES[modeIndex(m_player1, m_gameState.m_isDualMode ? m_player2 : nullptr)], at,
                 replaying ? "while replaying what it learned (the replay went differently)"
