@@ -213,6 +213,7 @@ namespace {
         bool tryBothOrbs = true;     // v2.4: if a run touches an orb and dies, retry with the other orb choice
         bool orbClick = true;        // v2.4: orb choice of the current run
         bool touchedOrb = false;     // v2.4: the current run touched an orb
+        bool fullHorizon = false;    // v3.0 autoplay: only surviving the whole look-ahead counts (no "landed = safe")
         bool skipPress = false;      // v2.4: run without pressing anything (auto-release hold check)
         bool avoidMovers = true;     // v2.4: don't buffer when the ghost's path has moving objects
         bool sawMover = false;       // v2.4: a run this decision touched a moving object
@@ -2654,7 +2655,7 @@ namespace {
             }
             // v2.79: after a portal changed the ghost's mode, only surviving the look-ahead counts
             // (the cube's "landed = safe" rule doesn't fit the new mode)
-            if ((flying && !ufoRun) || buf.ghostSwitched) {
+            if ((flying && !ufoRun) || buf.ghostSwitched || buf.fullHorizon) {
                 continue;
             }
 
@@ -4679,28 +4680,45 @@ namespace {
         bool dual = layer->m_gameState.m_isDualMode && layer->m_player2;
         auto* p2 = dual ? layer->m_player2 : nullptr;
         bool flyer = isFlying(p1) || (p2 && isFlying(p2));
-        int horizon = st(flyer ? 90 : 140);
+        // v3.0 test 4: a short look-ahead for flying modes (a tight wave needs a switch every few
+        // ticks, so a long one made every plan "die" and the pick was nearly random), a longer
+        // one on the ground. Only surviving all of it counts: "landed = safe" (the buffer's rule
+        // for one click) let autoplay stop looking right before the next spike.
+        int horizon = st(flyer ? 44 : 100);
+        // autoplay acts at the start of a tick, so the ghost's first step is a whole tick
+        // (not the part-tick left from your last Click Between Frames click)
+        float savedStep = buf.firstStep;
+        buf.firstStep = 1.f;
+        buf.fullHorizon = true;
         SimEnd end;
         // 1. keep the button as it is
         buf.skipPress = true;
         int keep = simulate(layer, p1, p2, dual, 0, true, horizon, -1, horizon, &end);
         buf.skipPress = false;
-        if (keep >= horizon) {
-            autoplay.safeUntil = tickCount + std::max(1, horizon / 4);
-            sweepGhostLayer();
-            return;
-        }
-        // 2. switch now (press or let go), then switch back after a few lengths, or never
-        bool down = !buf.appliedInput;
         int best = -1;
-        for (int back : { -1, st(3), st(8), st(16), st(32) }) {
-            int s = simulate(layer, p1, p2, dual, 0, down, horizon, back, horizon, &end);
-            best = std::max(best, s);
-            if (best >= horizon) {
-                break;
+        bool down = !buf.appliedInput;
+        if (keep < horizon) {
+            // 2. switch now (press or let go), then switch back after some time, or never
+            static constexpr int FLY_BACK[] = { -1, 2, 4, 7, 11, 16, 24 };
+            static constexpr int GROUND_BACK[] = { -1, 2, 5, 10, 18, 30 };
+            auto const* backs = flyer ? FLY_BACK : GROUND_BACK;
+            size_t count = flyer ? std::size(FLY_BACK) : std::size(GROUND_BACK);
+            for (size_t i = 0; i < count; ++i) {
+                int back = backs[i] < 0 ? -1 : st(backs[i]);
+                int s = simulate(layer, p1, p2, dual, 0, down, horizon, back, horizon, &end);
+                best = std::max(best, s);
+                if (best >= horizon) {
+                    break;
+                }
             }
         }
+        buf.fullHorizon = false;
+        buf.firstStep = savedStep;
         sweepGhostLayer();
+        if (keep >= horizon) {
+            autoplay.safeUntil = tickCount + st(2);  // check again very soon
+            return;
+        }
         if (best > keep) {
             sendButton(layer, down);
             ++autoplay.inputs;
@@ -6308,6 +6326,9 @@ class $modify(BufPlayLayer, PlayLayer) {
     }
 
     void destroyPlayer(PlayerObject* player, GameObject* object) {
+        if (autoplay.active && !buf.simulating && player == m_player1 && !player->m_isDead) {
+            say("autoplay died at {:.1f}% ({} inputs)", getCurrentPercent(), autoplay.inputs);
+        }
         if (buf.simulating && isGhost(player)) {
             buf.ghostDied = true;
             // v2.30 diagnostics: remember the first thing that kills the press-now ghost
