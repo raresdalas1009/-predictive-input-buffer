@@ -216,7 +216,8 @@ namespace {
         bool touchedOrb = false;     // v2.4: the current run touched an orb
         bool fullHorizon = false;
         std::vector<int> const* plan = nullptr;  // v3.0 autoplay: ticks (from now) at which the ghost flips its button
-        std::vector<std::pair<void*, int>> orbTouches;  // v3.0 test 8: orbs the planning ghost touched, and when    // v3.0 autoplay: only surviving the whole look-ahead counts (no "landed = safe")
+        std::vector<std::pair<void*, int>> orbTouches;
+        std::vector<int> orbTouchLast;  // v3.0 test 35: the last tick each of those orbs was still touched  // v3.0 test 8: orbs the planning ghost touched, and when    // v3.0 autoplay: only surviving the whole look-ahead counts (no "landed = safe")
         bool skipPress = false;      // v2.4: run without pressing anything (auto-release hold check)
         bool avoidMovers = true;     // v2.4: don't buffer when the ghost's path has moving objects
         bool sawMover = false;       // v2.4: a run this decision touched a moving object
@@ -5530,6 +5531,7 @@ namespace {
         int lastRecheck = -1000;
         int recheckFails = 0;  // test 33: re-checks in a row that died sooner than the route
         int beforeLimit = INT_MAX;  // test 32: after a take-back, the next search looks before it
+        std::vector<int> orbFirst;  // test 35: clicks in the middle of the orbs passed before the death, tried first
         std::string why;
     };
     Route route;
@@ -5669,6 +5671,7 @@ namespace {
         buf.orbAfterFirst = false;
         buf.portalPredict = true;
         buf.orbTouches.clear();
+        buf.orbTouchLast.clear();
         buf.plan = &rel;
         buf.skipPress = true;
         routeRec.clear();
@@ -5791,6 +5794,7 @@ namespace {
         route.fine = false;
         route.bestT = -1;
         route.bestEnd = death;
+        route.orbFirst.clear();
     }
 
     int routeCoarseStep(int t) {
@@ -5852,6 +5856,27 @@ namespace {
     // taken anyway, and the next death gets its own search (test 28 wanted one input to clear
     // everything up to 0.2 s past the death, so a part that needs two quick inputs was "stuck")
     void routeSprintStep(PlayLayer* layer, PlayerObject* p1) {
+        if (!route.orbFirst.empty() && route.windowHi < 0) {
+            int t = route.orbFirst.front();
+            route.orbFirst.erase(route.orbFirst.begin());
+            if (t >= route.lower && t < route.death && !route.bannedFirst.count(t) && !routeHeldAt(t)) {
+                bool tapMode = routeTapMode(t);
+                auto const& cp = routeCpAtOrBefore(t);
+                int cpTick = cp.tick;
+                int length = route.death - cpTick + st(120);
+                int lived = routeSim(layer, p1, cp, routeWith(t, tapMode), length, false);
+                if (lived >= length) {
+                    routeAccept(t, t, 0);  // the orb's middle gets through: taken as it is
+                    return;
+                }
+                if (cpTick + lived > route.bestEnd) {
+                    route.bestEnd = cpTick + lived;
+                    route.bestT = t;
+                    route.bestV = 0;
+                }
+            }
+            return;
+        }
         if (route.cand < route.lower) {
             if (route.windowHi >= 0) {
                 routeAccept(route.windowHi, route.lower, route.windowVariant);
@@ -5965,7 +5990,19 @@ namespace {
         }
         route.end = from.tick + lived;
         route.frontier = std::max(route.frontier, route.end);
+        std::vector<std::pair<int, int>> orbs;  // (first, last) touch ticks, absolute
+        for (size_t i = 0; i < buf.orbTouches.size() && i < buf.orbTouchLast.size(); ++i) {
+            orbs.push_back({ from.tick + buf.orbTouches[i].second, from.tick + buf.orbTouchLast[i] });
+        }
         routeBeginSprint(from.tick + lived);
+        // v3.0 test 35: orbs it went through on the way: a click in the middle of each is tried
+        // first, the nearest to the death first (orb clicks came out too early / late / missing)
+        for (auto it = orbs.rbegin(); it != orbs.rend(); ++it) {
+            int mid = (it->first + it->second) / 2;
+            if (mid >= route.lower && mid < route.death) {
+                route.orbFirst.push_back(mid);
+            }
+        }
         return true;
     }
 
@@ -6090,10 +6127,11 @@ namespace {
             autoplay.frameMs = 0.0;
         }
         double frameMs = std::max(1.0, CCDirector::get()->getDeltaTime() * 1000.0);
+        // v3.0 test 35: twice the planning time of test 34 (asked for: more thinking, a little FPS)
 #ifdef GEODE_IS_MOBILE
-        double budget = std::clamp(frameMs * 0.45, 2.0, 5.0);
+        double budget = std::clamp(frameMs * 0.9, 4.0, 10.0);
 #else
-        double budget = std::clamp(frameMs * 0.45, 2.0, 8.0);
+        double budget = std::clamp(frameMs * 0.9, 4.0, 16.0);
 #endif
         if (route.end - tickCount < st(60)) {
             budget *= 2.0;  // the planned part is about to run out
@@ -9333,11 +9371,18 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
         // chain, falls, and the mod thinks a perfectly good click is a death.
         if (buf.simulating && buf.plan && player == buf.ghost1) {
             bool seen = false;
-            for (auto const& [r, t] : buf.orbTouches) {
-                seen = seen || r == ring;
+            for (size_t i = 0; i < buf.orbTouches.size(); ++i) {
+                if (buf.orbTouches[i].first == ring) {
+                    seen = true;
+                    if (i < buf.orbTouchLast.size()) {
+                        buf.orbTouchLast[i] = buf.simTick;
+                    }
+                }
             }
             if (!seen) {
                 buf.orbTouches.push_back({ ring, buf.simTick });
+                buf.orbTouchLast.resize(buf.orbTouches.size() - 1);
+                buf.orbTouchLast.push_back(buf.simTick);
             }
         }
         bool autoOrb = buf.orbClick || (buf.orbAfterFirst && buf.orbUsedTick >= 0 && !buf.orbsUsed.contains(ring));
