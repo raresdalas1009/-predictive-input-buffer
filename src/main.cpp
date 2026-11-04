@@ -4814,6 +4814,15 @@ namespace {
         else {
             backs.assign(std::begin(GROUND_BACKS), std::end(GROUND_BACKS));
         }
+        // v3.0 test 19: then earlier and earlier, all the way back to the last flip. The way past a
+        // spike can be a jump long before it (onto another path); test 18 showed the ghost hitting
+        // the same spike as you, with no press ever tried more than 100 ticks before it.
+        {
+            int stepBack = c.holdMode ? 6 : 12;
+            for (int b = backs.back() + stepBack; st(b) <= survived - last; b += stepBack) {
+                backs.push_back(b);
+            }
+        }
         for (int back : backs) {
             int t = survived - st(back);
             if (t <= last) {
