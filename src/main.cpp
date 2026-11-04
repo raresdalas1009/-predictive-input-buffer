@@ -5428,6 +5428,7 @@ namespace {
         int drawnAt = -1000;
         bool changed = false;
         bool fine = false;  // test 28: the search goes a few ticks at a time first, then tick by tick
+        int lastRecheck = -1000;
         std::string why;
     };
     Route route;
@@ -5435,9 +5436,11 @@ namespace {
     int routeSimCount = 0;
     int routeReports = 0;
     int routeDrifts = 0;
+    int routeRechecks = 0;
     void routeCountersReset() {
         routeReports = 0;
         routeDrifts = 0;
+        routeRechecks = 0;
         routeSimMs = 0.0;
         routeSimCount = 0;
     }
@@ -5891,6 +5894,46 @@ namespace {
             routeStart(layer, p1);
             if (!route.active) {
                 return false;
+            }
+        }
+        // v3.0 test 30: what moves is only known well once you're close (the objects have been seen
+        // moving). Every 0.05 s the next 1.25 s of the route are played again from you, with the
+        // objects as they are now; if that dies sooner than the route said, the route is planned
+        // again from you, keeping its inputs still to come (they're checked again from there)
+        if (route.active && !route.sprinting && tickCount - route.lastRecheck >= st(12) && route.end - tickCount > st(6)) {
+            route.lastRecheck = tickCount;
+            RoutePoint here { tickCount, nullptr, buf.appliedInput };
+            int length = std::min(route.end, tickCount + st(300)) - tickCount;
+            int lived = routeSim(layer, p1, here, route.flips, length, false);
+            if (lived < length) {
+                if (routeRechecks < 12) {
+                    ++routeRechecks;
+                    say("route re-check at tick {}: it now dies {} ticks ahead, not past {} (something moved): planned again from you", at,
+                        lived, length);
+                }
+                std::vector<int> future;
+                std::vector<RouteGroup> futureGroups;
+                for (int f : route.flips) {
+                    if (f >= tickCount) {
+                        future.push_back(f);
+                    }
+                }
+                for (auto const& g : route.groups) {
+                    if (g.first >= tickCount) {
+                        futureGroups.push_back(g);
+                    }
+                }
+                // the button just before this tick's own inputs, as the old route had it
+                bool heldNow = routeHeldAt(tickCount);
+                routeStart(layer, p1);
+                if (!route.active) {
+                    return false;
+                }
+                route.originHeld = heldNow;
+                route.cps.front().held = heldNow;
+                route.flips = future;
+                route.groups = futureGroups;
+                route.lastRecheck = tickCount;
             }
         }
         // the route's saved states behind you aren't needed any more
