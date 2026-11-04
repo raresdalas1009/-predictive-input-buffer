@@ -4793,9 +4793,16 @@ namespace {
             if (t < 0 || t > survived) {
                 continue;
             }
+            // v3.0 test 9: outside wave / ship a jump is a tap (press, let go 3 ticks later), one
+            // step of the search instead of two
+            bool heldAt = c.held0 != (rel.size() % 2 == 1);
+            size_t before = rel.size();
             rel.push_back(t);
+            if (!c.holdMode && !heldAt) {
+                rel.push_back(t + st(3));
+            }
             int r = planSearch(c, rel, depth - 1, budget, best, bestLen);
-            rel.pop_back();
+            rel.resize(before);
             if (r >= c.horizon || autoplay.sims >= budget) {
                 return r;
             }
@@ -4825,10 +4832,9 @@ namespace {
 
     // a death: keep this attempt's inputs up to a bit before it (normal mode, bot-only attempts)
     void autoplayDied(PlayLayer* layer) {
-        if (layer->m_isPracticeMode || autoplay.userTouched || autoplay.diedThisAttempt) {
+        if (layer->m_isPracticeMode || autoplay.userTouched) {
             return;
         }
-        autoplay.diedThisAttempt = true;
         int reached = autoplay.attemptTick;
         if (autoplay.lastDeath >= 0 && std::abs(reached - autoplay.lastDeath) < st(30)) {
             ++autoplay.sameDeaths;
@@ -4909,6 +4915,10 @@ namespace {
         autoplay.sims = 0;
         int survived = simulatePlan(c, rel);
         bool changed = false;
+        if (survived < st(20)) {
+            // a crash is close: this frame may take longer (a tiny hitch beats a death)
+            autoplay.searchCap = std::max(autoplay.searchCap, std::max(1.0, buf.userBudget) * 3.0);
+        }
         if (survived < c.horizon) {
             std::vector<int> best = rel;
             int bestLen = survived;
@@ -6562,9 +6572,12 @@ class $modify(BufPlayLayer, PlayLayer) {
     }
 
     void destroyPlayer(PlayerObject* player, GameObject* object) {
-        if (autoplay.active && !buf.simulating && player == m_player1 && !player->m_isDead) {
+        // (v3.0 test 9: the game "kills" you with its hidden anticheat spike in the first ticks of
+        // every attempt; that isn't a death, and it made autoplay learn nothing)
+        if (autoplay.active && !buf.simulating && player == m_player1 && !player->m_isDead && object != m_anticheatSpike &&
+            !autoplay.diedThisAttempt) {
             say("autoplay died at {:.1f}% ({} inputs)", getCurrentPercent(), autoplay.inputs);
-            autoplayDied(this);
+            autoplay.diedThisAttempt = true;
         }
         if (buf.simulating && isGhost(player)) {
             buf.ghostDied = true;
@@ -6825,6 +6838,10 @@ class $modify(BufPlayLayer, PlayLayer) {
     }
 
     void resetLevel() {
+        // v3.0 test 9: an attempt that ended in a real death (the game restarts with you dead)
+        if (autoplay.active && autoplay.layer == this && m_player1 && m_player1->m_isDead) {
+            autoplayDied(this);
+        }
         triggerChecks.clear();  // v2.84
         attemptStartTick = tickCount;  // v2.84.3
         benchFinish();
