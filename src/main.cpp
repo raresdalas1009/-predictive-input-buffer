@@ -4588,6 +4588,117 @@ namespace {
     // tick whether holding crashes within the next `autoWindow` ticks. If it does and
     // letting go now clearly survives longer, let go for you. Your own release later is
     // swallowed, and your next press works as normal.
+    // v3.0 autoplay, for level showcases: the hidden ghost looks ahead every physics tick and
+    // the mod presses / lets go only when keeping the button as it is would crash sooner than
+    // switching. The level is put in test mode, so the game saves nothing it plays; your own
+    // clicks are ignored while it runs, and AUTOPLAY stays on screen.
+    struct Autoplay {
+        bool active = false;
+        PlayLayer* layer = nullptr;
+        int safeUntil = -1;   // tick until which the current button state is known to be fine
+        int inputs = 0;
+        CCLabelBMFont* tag = nullptr;
+    };
+    Autoplay autoplay;
+
+    void stopAutoplay(char const* why) {
+        if (!autoplay.active) {
+            return;
+        }
+        auto* layer = GameManager::get()->m_playLayer;
+        if (layer && layer == autoplay.layer) {
+            if (autoplay.tag) {
+                autoplay.tag->removeFromParent();
+            }
+            if (buf.appliedInput) {
+                sendButton(layer, false);
+            }
+        }
+        say("autoplay off{} ({} inputs)", why, autoplay.inputs);
+        autoplay = {};
+    }
+
+    // a level that was left without quitting: its label went with it, so it's only forgotten
+    void forgetAutoplay() {
+        autoplay = {};
+    }
+
+    bool startAutoplay(std::string* why) {
+        auto* layer = GameManager::get()->m_playLayer;
+        if (!layer) {
+            *why = "Open a level first.";
+            return false;
+        }
+        if (layer->m_isPlatformer) {
+            *why = "Autoplay doesn't do platformer levels.";
+            return false;
+        }
+        if (layer->m_level && layer->m_level->m_twoPlayerMode) {
+            *why = "Autoplay doesn't do 2-player levels.";
+            return false;
+        }
+        if (!buf.ghost1 || buf.owner != layer) {
+            *why = "The level isn't ready yet, try again in a moment.";
+            return false;
+        }
+        // the game itself saves nothing (progress, completion, stars) in test mode
+        layer->m_isTestMode = true;
+        autoplay = {};
+        autoplay.active = true;
+        autoplay.layer = layer;
+        resetPending();
+        auto win = CCDirector::get()->getWinSize();
+        autoplay.tag = CCLabelBMFont::create("AUTOPLAY", "bigFont.fnt");
+        autoplay.tag->setScale(0.45f);
+        autoplay.tag->setColor({ 255, 215, 90 });
+        autoplay.tag->setOpacity(220);
+        autoplay.tag->setPosition({ win.width / 2.f, win.height - 26.f });
+        autoplay.tag->setID("autoplay-label"_spr);
+        layer->addChild(autoplay.tag, 1000);
+        say("autoplay on: the level is in test mode, nothing is saved as progress");
+        return true;
+    }
+
+    void autoplayTick(PlayLayer* layer, PlayerObject* p1) {
+        if (!autoplay.active || autoplay.layer != layer || p1->m_isDead || !buf.ghost1 || buf.owner != layer) {
+            return;
+        }
+        resetPending();
+        if (tickCount < autoplay.safeUntil) {
+            return;
+        }
+        bool dual = layer->m_gameState.m_isDualMode && layer->m_player2;
+        auto* p2 = dual ? layer->m_player2 : nullptr;
+        bool flyer = isFlying(p1) || (p2 && isFlying(p2));
+        int horizon = st(flyer ? 90 : 140);
+        SimEnd end;
+        // 1. keep the button as it is
+        buf.skipPress = true;
+        int keep = simulate(layer, p1, p2, dual, 0, true, horizon, -1, horizon, &end);
+        buf.skipPress = false;
+        if (keep >= horizon) {
+            autoplay.safeUntil = tickCount + std::max(1, horizon / 4);
+            sweepGhostLayer();
+            return;
+        }
+        // 2. switch now (press or let go), then switch back after a few lengths, or never
+        bool down = !buf.appliedInput;
+        int best = -1;
+        for (int back : { -1, st(3), st(8), st(16), st(32) }) {
+            int s = simulate(layer, p1, p2, dual, 0, down, horizon, back, horizon, &end);
+            best = std::max(best, s);
+            if (best >= horizon) {
+                break;
+            }
+        }
+        sweepGhostLayer();
+        if (best > keep) {
+            sendButton(layer, down);
+            ++autoplay.inputs;
+            autoplay.safeUntil = -1;
+        }
+    }
+
     void tryAutoRelease(PlayLayer* layer, PlayerObject* p1) {
         if ((!buf.autoRelease && !buf.robotAutoRelease && !buf.dashAutoRelease) || buf.autoReleased || layer->m_isPlatformer) {
             return;
@@ -5564,7 +5675,17 @@ private:
             ->limitLabelWidth(colW - 18.f, 0.36f, 0.15f);
         label(m_page, "AUTOPLAY stays on screen while it runs.", 0.36f, m_muted, { rx + 9.f, top - 55.f }, { 0.f, 0.5f })
             ->limitLabelWidth(colW - 18.f, 0.36f, 0.15f);
-        label(m_page, "Coming in the next test build.", 0.42f, m_t.soft, { rx + colW / 2.f, top - 90.f });
+        bool inLevel = GameManager::get()->m_playLayer != nullptr;
+        button(m_pageMenu, autoplay.active ? "Stop Autoplay" : "Start Autoplay", menu_selector(BufferMenu::onAutoplay),
+            { rx + colW / 2.f, top - 82.f }, colW - 16.f, !autoplay.active, 0, 22.f,
+            autoplay.active ? std::optional<ccColor3B>(ccColor3B { 235, 80, 90 }) : std::nullopt);
+        label(m_page,
+            autoplay.active ? fmt::format("Playing - {} inputs so far. Your clicks are ignored.", autoplay.inputs)
+                            : inLevel ? std::string("Starts from where you are. Close the menu to watch.")
+                                      : std::string("Open a level, then start it from the pause menu."),
+            0.36f, m_muted, { rx + colW / 2.f, top - 102.f })->limitLabelWidth(colW - 16.f, 0.36f, 0.15f);
+        label(m_page, "Not for platformer or 2-player levels.", 0.34f, m_muted, { rx + colW / 2.f, top - 114.f })
+            ->limitLabelWidth(colW - 16.f, 0.34f, 0.15f);
         float bw = (colW - 22.f) / 2.f;
         button(m_pageMenu, "Forget Level", menu_selector(BufferMenu::onForget), { rx + 8.f + bw / 2.f, FOOT + 20.f }, bw);
         button(m_pageMenu, "Show On Screen", menu_selector(BufferMenu::onConsole), { rx + 14.f + bw * 1.5f, FOOT + 20.f }, bw);
@@ -5956,6 +6077,20 @@ private:
         rebuildPage();
     }
 
+    void onAutoplay(CCObject*) {
+        if (autoplay.active) {
+            stopAutoplay("");
+            rebuildPage();
+            return;
+        }
+        std::string why;
+        if (!startAutoplay(&why)) {
+            FLAlertLayer::create("Autoplay", why, "OK")->show();
+            return;
+        }
+        rebuildPage();
+    }
+
     void onChangelog(CCObject*) {
         web::openLinkInBrowser("https://github.com/raresdalas1009/-predictive-input-buffer/releases");
     }
@@ -6190,6 +6325,14 @@ class $modify(BufPlayLayer, PlayLayer) {
     }
 
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
+        // v2.99.6: the last level was replaced without being quit (seen with Versus, which
+        // opens levels on its own). Its nodes are already freed, and the new level can even
+        // be created at the same address, so `buf.owner == this` matched during loading and
+        // resetLevel touched the old level's freed nodes (crash reading 0xFFFFFFFFFFFFFFFF).
+        // Forget all of it before the game starts loading, without touching any of it.
+        if (buf.owner) {
+            forgetLeftLevel();
+        }
         if (!PlayLayer::init(level, useReplay, dontCreateObjects)) {
             return false;
         }
@@ -6357,6 +6500,24 @@ class $modify(BufPlayLayer, PlayLayer) {
         return true;
     }
 
+    // v2.99.6: a level that went away without onQuit. Its nodes may be freed, so they're only
+    // forgotten (never touched). The ghosts are let go of the same way (like Android): they
+    // still point at the old level, so deleting them isn't safe.
+    static void forgetLeftLevel() {
+        benchFinish();
+        benchRecording = false;
+        saveMemory();
+        restoreGlobals();
+        memoryKey.clear();
+        buf.hintLabel = nullptr;
+        buf.heatNode = nullptr;
+        buf.ghost1 = nullptr;
+        buf.ghost2 = nullptr;
+        buf.ghostLayer = nullptr;
+        dropGhosts();  // with the ghosts gone this only clears pointers and state
+        forgetAutoplay();
+    }
+
     void onQuit() {
         benchFinish();
         benchFlush();
@@ -6366,6 +6527,7 @@ class $modify(BufPlayLayer, PlayLayer) {
         buf.hintLabel = nullptr;
         buf.heatNode = nullptr;
         memoryKey.clear();
+        stopAutoplay("");
         dropGhosts();
         PlayLayer::onQuit();
     }
@@ -6596,7 +6758,10 @@ class $modify(BufPlayerObject, PlayerObject) {
             }
             driftStep(this);
             memoryTick();
-            if (buf.enabled) {
+            if (autoplay.active) {
+                autoplayTick(layer, this);
+            }
+            else if (buf.enabled) {
                 deliverPending(layer, this);
                 livePath(layer, this);
             }
@@ -7257,6 +7422,10 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     }
 
     void handleButton(bool down, int button, bool isPlayer1) {
+        // v3.0: while autoplay plays, your own clicks don't reach the game
+        if (autoplay.active && !buf.simulating && !buf.injecting) {
+            return;
+        }
         if (!buf.simulating && button == 1 && !buf.injecting) {
             auto* p1 = this->m_player1;
             if (down || (p1 && (p1->m_isDart || p1->m_isRobot))) {
