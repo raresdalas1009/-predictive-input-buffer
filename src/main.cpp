@@ -4868,8 +4868,11 @@ namespace {
 
     // a new attempt: the learned inputs are replayed from the start again
     void autoplayAttemptStart(PlayLayer* layer) {
-        if (buf.appliedInput) {
-            autoplayButton(layer, false);  // always start let go
+        // normal mode: always start let go, so the learned inputs replay the same. Practice: a
+        // checkpoint can put you mid-flight (ship), where letting go means crashing at once, so
+        // autoplay plans from however you respawn (v3.0 test 13)
+        if (buf.appliedInput && !layer->m_isPracticeMode) {
+            autoplayButton(layer, false);
         }
         autoplay.planSafeUntil = -1;
         autoplay.attemptTick = 0;
@@ -4952,7 +4955,17 @@ namespace {
             autoplay.frame = frame;
             autoplay.frameMs = 0.0;
         }
-        double left = std::max(1.0, buf.userBudget) - autoplay.frameMs;
+        // v3.0 test 13: autoplay's own minimum time per frame (a showcase can spend a bit more than
+        // the buffer, which uses the "budget" setting): 8 ms on PC, 4 ms on phones
+#ifdef GEODE_IS_MOBILE
+        double frameBudget = std::max(4.0, buf.userBudget);
+#else
+        double frameBudget = std::max(8.0, buf.userBudget);
+#endif
+        if (at < st(6)) {
+            frameBudget *= 3.0;  // the first ticks of an attempt or a respawn: plan properly at once
+        }
+        double left = frameBudget - autoplay.frameMs;
         if (left < 0.25) {
             return;  // this frame's time is used up: keep following the plan, look again next frame
         }
@@ -4971,7 +4984,7 @@ namespace {
         bool changed = false;
         if (survived < st(20)) {
             // a crash is close: this frame may take longer (a tiny hitch beats a death)
-            autoplay.searchCap = std::max(autoplay.searchCap, std::max(1.0, buf.userBudget) * 3.0);
+            autoplay.searchCap = std::max(autoplay.searchCap, frameBudget * 2.0);
         }
         if (survived < c.horizon) {
             std::vector<int> best = rel;
@@ -6632,7 +6645,7 @@ class $modify(BufPlayLayer, PlayLayer) {
         if (autoplay.active && !buf.simulating && player == m_player1 && !player->m_isDead && object != m_anticheatSpike &&
             !autoplay.diedThisAttempt) {
             int at = autoplay.attemptTick;
-            bool replaying = at <= autoplay.knownUntil;
+            bool replaying = !m_isPracticeMode && autoplay.knownUntil > 0 && at <= autoplay.knownUntil;
             bool expected = autoplay.planSafeUntil > at + 2;
             say("autoplay died at {:.1f}% as {} (tick {}): {}", getCurrentPercent(), MODE_NAMES[modeIndex(m_player1, m_gameState.m_isDualMode ? m_player2 : nullptr)], at,
                 replaying ? "while replaying what it learned (the replay went differently)"
@@ -6918,7 +6931,7 @@ class $modify(BufPlayLayer, PlayLayer) {
             PlayLayer::resetLevel();
             return;
         }
-        if (buf.appliedInput && !buf.realInput) {
+        if (buf.appliedInput && !buf.realInput && !(autoplay.active && m_isPracticeMode)) {
             sendButton(this, false);
         }
         resetPending();
