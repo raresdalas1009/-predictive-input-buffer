@@ -5493,7 +5493,9 @@ namespace {
         int drawnAt = -1000;
         bool changed = false;
         bool fine = false;  // test 28: the search goes a few ticks at a time first, then tick by tick
+        int candStart = 0;
         int lastRecheck = -1000;
+        int beforeLimit = INT_MAX;  // test 32: after a take-back, the next search looks before it
         std::string why;
     };
     Route route;
@@ -5715,7 +5717,11 @@ namespace {
         route.death = death;
         int lastFlip = route.flips.empty() ? -1000000 : route.flips.back();
         route.lower = std::max({ death - st(240), lastFlip + 1, tickCount + 1, route.cps.front().tick });
-        route.cand = death - 1;
+        // v3.0 test 32: right after a take-back, only inputs BEFORE the one taken back: test 31 put
+        // nearly the same input back a tick or two off (a wave turn at the same peak, 8 times over)
+        route.cand = std::min(death - 1, route.beforeLimit - st(2));
+        route.beforeLimit = INT_MAX;
+        route.candStart = route.cand;
         route.variant = 0;
         route.windowHi = -1;
         route.fine = false;
@@ -5771,6 +5777,7 @@ namespace {
         }
         ++route.takebacks;
         route.sprinting = false;
+        route.beforeLimit = g.first;
         routeKeepCps(g.first);
     }
 
@@ -5788,7 +5795,7 @@ namespace {
             }
             else if (!route.fine) {
                 route.fine = true;  // the quick pass (every 2-3 ticks) found nothing: now every tick
-                route.cand = route.death - 1;
+                route.cand = route.candStart;
                 route.variant = 0;
             }
             else {
@@ -5834,7 +5841,7 @@ namespace {
             // the quick pass found one: tick by tick from just above it, for the latest
             route.fine = true;
             route.variant = v;
-            route.cand = std::min(t + step - 1, route.death - 1);
+            route.cand = std::min(t + step - 1, route.candStart);
             if (route.cand == t) {
                 route.windowHi = t;
                 route.windowVariant = v;
