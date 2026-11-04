@@ -4656,6 +4656,13 @@ namespace {
         std::vector<QItem> queue;
         std::set<std::vector<int>> seen;
         int queueBase = -1;  // tick the queue was built at (cleared when a flip happens)
+        // v3.0 test 22: the level is held still while it thinks about a crash that's close
+        bool freeze = false;
+        int freezeAt = 0;
+        int freezeFrames = 0;
+        double freezeMs = 0.0;
+        std::chrono::steady_clock::time_point freezeStart {};
+        int thinkReports = 0;
         CCLabelBMFont* tag = nullptr;
     };
     Autoplay autoplay;
@@ -5003,6 +5010,22 @@ namespace {
         autoplaySet(layer, !buf.appliedInput);
     }
 
+    void autoplayUnfreeze(bool report, int survived = 0) {
+        if (!autoplay.freeze) {
+            return;
+        }
+        autoplay.freeze = false;
+        if (autoplay.tag) {
+            autoplay.tag->setString(autoplay.takeOver ? "AUTOPLAY - TAKE OVER" : "AUTOPLAY");
+        }
+        if (report && autoplay.thinkReports < 12) {
+            ++autoplay.thinkReports;
+            say("autoplay stopped to think at tick {} for {:.1f} s ({} frames): {}", autoplay.freezeAt, autoplay.freezeMs / 1000.0,
+                autoplay.freezeFrames,
+                survived >= st(24) ? fmt::format("found a way ({} ticks safe)", survived) : std::string("gave up, plays on"));
+        }
+    }
+
     // a new attempt: the learned inputs are replayed from the start again
     void autoplayAttemptStart(PlayLayer* layer) {
         // normal mode: always start let go, so the learned inputs replay the same. Practice: a
@@ -5020,6 +5043,9 @@ namespace {
         autoplay.userTouched = false;
         autoplay.diedThisAttempt = false;
         autoplay.reports = 0;
+        autoplay.thinkReports = 0;
+        autoplayUnfreeze(false);
+        autoplay.freezeMs = 0.0;
         clearQueue();
     }
 
@@ -5048,6 +5074,11 @@ namespace {
         int keepUntil = reached - st(60) - autoplay.sameDeaths / 2 * st(90);
         if (keepUntil > autoplay.knownUntil || autoplay.sameDeaths >= 2) {
             autoplay.knownUntil = std::max(0, keepUntil);
+            if (autoplay.sameDeaths >= 2) {
+                // v3.0 test 22: going back further means the route before the hard part changes,
+                // so presses that failed after a different route may work now: try them again
+                autoplay.banned.erase(autoplay.banned.lower_bound(autoplay.knownUntil), autoplay.banned.end());
+            }
             autoplay.known.clear();
             for (auto const& f : autoplay.attemptFlips) {
                 if (f.first < autoplay.knownUntil) {
@@ -5057,6 +5088,8 @@ namespace {
             say("autoplay remembers {} inputs ({} ticks of this level)", autoplay.known.size(), autoplay.knownUntil);
         }
     }
+
+    void autoplaySearch(PlayLayer* layer, PlayerObject* p1, int at, bool thinking);
 
     void autoplayTick(PlayLayer* layer, PlayerObject* p1) {
         if (!autoplay.active || autoplay.layer != layer || p1->m_isDead || !buf.ghost1 || buf.owner != layer) {
@@ -5080,6 +5113,30 @@ namespace {
             }
             return;
         }
+        // follow the plan: flips due now (the queued plans were built before it, so they go)
+        while (!autoplay.plan.empty() && autoplay.plan.front() <= tickCount) {
+            autoplay.plan.erase(autoplay.plan.begin());
+            autoplayFlip(layer);
+            clearQueue();
+        }
+        autoplaySearch(layer, p1, at, false);
+    }
+
+    // v3.0 test 22: the level is held still while autoplay thinks (see autoplaySearch); each frame
+    // it searches on as if at the start of the next tick, without moving
+    void autoplayThink(PlayLayer* layer) {
+        auto* p1 = layer ? layer->m_player1 : nullptr;
+        if (!autoplay.active || autoplay.layer != layer || !p1 || p1->m_isDead || !buf.ghost1 || buf.owner != layer ||
+            (autoplay.takeOver && tickCount < autoplay.userUntil)) {
+            autoplayUnfreeze(false);
+            return;
+        }
+        ++tickCount;
+        autoplaySearch(layer, p1, autoplay.attemptTick, true);
+        --tickCount;
+    }
+
+    void autoplaySearch(PlayLayer* layer, PlayerObject* p1, int at, bool thinking) {
         bool dual = layer->m_gameState.m_isDualMode && layer->m_player2;
         auto* p2 = dual ? layer->m_player2 : nullptr;
         bool holdMode = p1->m_isDart || p1->m_isShip || (p2 && (p2->m_isDart || p2->m_isShip));
@@ -5091,15 +5148,8 @@ namespace {
         PlanCtx c { layer, p1, p2, dual, st(flyer ? 300 : 360), buf.appliedInput, holdMode };
         c.at = at;
         c.banned = layer->m_isPracticeMode ? nullptr : &autoplay.banned;
-
-        // follow the plan: flips due now (the queued plans were built before it, so they go)
-        while (!autoplay.plan.empty() && autoplay.plan.front() <= tickCount) {
-            autoplay.plan.erase(autoplay.plan.begin());
-            autoplayFlip(layer);
-            clearQueue();
-        }
         c.held0 = buf.appliedInput;
-        if (tickCount < autoplay.verifyAt) {
+        if (!thinking && tickCount < autoplay.verifyAt) {
             return;
         }
         unsigned frame = CCDirector::get()->getTotalFrames();
@@ -5117,6 +5167,14 @@ namespace {
 #endif
         if (at < st(6)) {
             frameBudget *= 3.0;  // the first ticks of an attempt or a respawn: plan properly at once
+        }
+        if (thinking) {
+            // nothing moves this frame, so it can take more of it (the picture still draws smoothly)
+#ifdef GEODE_IS_MOBILE
+            frameBudget = std::clamp(frameMs * 0.6, 3.0, 9.0);
+#else
+            frameBudget = std::clamp(frameMs * 0.6, 3.0, 12.0);
+#endif
         }
         double left = frameBudget - autoplay.frameMs;
         if (left < 0.25) {
@@ -5140,7 +5198,7 @@ namespace {
         autoplay.sims = 0;
         int survived = simulatePlan(c, rel);
         bool changed = seeded;
-        if (survived < st(30)) {
+        if (survived < st(30) && !thinking) {
             // a crash is close: this frame may take longer (a tiny hitch beats a death)
             autoplay.searchCap = std::max(autoplay.searchCap, frameBudget * 2.0);
         }
@@ -5252,8 +5310,8 @@ namespace {
             for (int t : rel) {
                 autoplay.plan.push_back(tickCount + t);
             }
-            // flips due right now
-            while (!autoplay.plan.empty() && autoplay.plan.front() <= tickCount) {
+            // flips due right now (while thinking, the next tick makes them)
+            while (!thinking && !autoplay.plan.empty() && autoplay.plan.front() <= tickCount) {
                 autoplay.plan.erase(autoplay.plan.begin());
                 autoplayFlip(layer);
             }
@@ -5262,6 +5320,29 @@ namespace {
         // a full plan is re-checked every few ticks; one that's still short keeps being worked on
         // (within the frame's time)
         autoplay.verifyAt = tickCount + (survived >= c.horizon ? st(8) : 1);
+
+        // v3.0 test 22: the plan still crashes very soon: hold the level still and keep searching
+        // (a few frames of standing still beat dying because the hard part came before the answer).
+        // Up to 3 s of thinking per spot; nothing moves meanwhile, so it plays the same as without.
+        bool wantFreeze = survived < st(24) && !(autoplay.takeOver && tickCount < autoplay.userUntil);
+        if (wantFreeze && autoplay.freezeMs < 3000.0) {
+            if (!autoplay.freeze) {
+                autoplay.freeze = true;
+                autoplay.freezeAt = at;
+                autoplay.freezeFrames = 0;
+                autoplay.freezeStart = std::chrono::steady_clock::now();
+                if (autoplay.tag) {
+                    autoplay.tag->setString("AUTOPLAY - thinking...");
+                }
+            }
+            autoplay.freezeMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - autoplay.freezeStart).count();
+        }
+        else if (autoplay.freeze) {
+            autoplayUnfreeze(true, survived);
+        }
+        else if (!wantFreeze) {
+            autoplay.freezeMs = 0.0;  // a new spot can take its own 3 s
+        }
     }
 
     void tryAutoRelease(PlayLayer* layer, PlayerObject* p1) {
@@ -7857,6 +7938,15 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
             GJBaseGameLayer::update(dt);
             return;
         }
+        if (fixedStep && autoplay.freeze) {
+            // v3.0 test 22: autoplay is thinking about a crash that's close: the level holds still
+            ++autoplay.freezeFrames;
+            autoplayThink(static_cast<PlayLayer*>(static_cast<GJBaseGameLayer*>(this)));
+            if (autoplay.freeze) {
+                tpsCarry = 0.0;
+                return;
+            }
+        }
         double step = 1.0 / std::max(tps, 240);
         tpsCarry += dt;
         int steps = static_cast<int>(tpsCarry / step);
@@ -7871,6 +7961,10 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
         tpsDriving = true;
         for (int i = 0; i < steps; ++i) {
             GJBaseGameLayer::update(static_cast<float>(step));
+            if (fixedStep && autoplay.freeze) {
+                tpsCarry = 0.0;  // stop here and think from the next frame on
+                break;
+            }
         }
         tpsDriving = false;
     }
