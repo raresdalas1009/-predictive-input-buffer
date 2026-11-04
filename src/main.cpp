@@ -308,6 +308,9 @@ namespace {
         std::vector<CCPoint>* recordPath = nullptr;  // v2.4: ghost1 positions of the current run
         bool showPath = false;       // v2.11: draw the predicted path (F10)
         CCDrawNode* pathNode = nullptr;  // v2.11: owned by the level's object layer
+        // v3.0 test 26: spots where autoplay really died although the ghost thought it was safe
+        // (something the ghost can't see). Its ghost counts touching them as a death.
+        std::vector<CCRect> autoDangers;
         int pathHoldUntil = 0;       // v2.65: live path waits while a click's path is on screen
 
         std::unordered_set<GameObject*> simUsed;
@@ -2462,6 +2465,15 @@ namespace {
         ghost->m_collisionLogLeft->removeAllObjects();
         ghost->m_collisionLogRight->removeAllObjects();
         layer->checkCollisions(ghost, dt, false);
+        if (buf.simulating && !buf.ghostDied && !buf.autoDangers.empty()) {
+            auto r = ghost->getObjectRect();
+            for (auto const& d : buf.autoDangers) {
+                if (r.intersectsRect(d)) {
+                    buf.ghostDied = true;
+                    break;
+                }
+            }
+        }
     }
 
     bool isFlying(PlayerObject* player) {
@@ -4690,7 +4702,8 @@ namespace {
         return Mod::get()->getSaveDir() / "autoplay" / (autoplay.saveKey + ".txt");
     }
 
-    void autoplayKey(GJGameLevel* level) {
+    void autoplayKey(PlayLayer* layer) {
+        auto* level = layer->m_level;
         autoplay.saveKey.clear();
         autoplay.levelHash = 0;
         if (!level) {
@@ -4709,11 +4722,15 @@ namespace {
             }
             autoplay.saveKey = "local_" + name;
         }
+        // v3.0 test 26: a start position is a different run: its own save
+        if (layer->m_startPosObject) {
+            autoplay.saveKey += fmt::format("_start{}", static_cast<int>(layer->m_startPosObject->getPositionX()));
+        }
         autoplay.levelHash = std::hash<std::string> {}(std::string(level->m_levelString)) ^ static_cast<size_t>(level->m_levelVersion);
     }
 
     void saveAutoplay() {
-        if (autoplay.saveKey.empty() || autoplay.knownUntil <= 0) {
+        if (autoplay.saveKey.empty() || (autoplay.knownUntil <= 0 && buf.autoDangers.empty())) {
             return;
         }
         std::error_code ec;
@@ -4726,6 +4743,9 @@ namespace {
         }
         for (auto const& pt : autoplay.knownTrail) {
             out << "p " << pt.x << ' ' << pt.y << '\n';
+        }
+        for (auto const& d : buf.autoDangers) {
+            out << "d " << d.origin.x << ' ' << d.origin.y << ' ' << d.size.width << ' ' << d.size.height << '\n';
         }
     }
 
@@ -4754,7 +4774,7 @@ namespace {
     }
 
     void loadAutoplay(PlayLayer* layer) {
-        autoplayKey(layer->m_level);
+        autoplayKey(layer);
         if (autoplay.saveKey.empty()) {
             return;
         }
@@ -4779,6 +4799,12 @@ namespace {
                 int t = 0, down = 0;
                 if (in >> t >> down) {
                     autoplay.known.push_back({ t, down != 0 });
+                }
+            }
+            else if (kind == "d") {
+                float x = 0.f, y = 0.f, w = 0.f, h = 0.f;
+                if (in >> x >> y >> w >> h) {
+                    buf.autoDangers.push_back(CCRect(x, y, w, h));
                 }
             }
             else if (kind == "p") {
@@ -4868,11 +4894,13 @@ namespace {
         }
         say("autoplay off{} ({} inputs)", why, autoplay.inputs);
         autoplay = {};
+        buf.autoDangers.clear();
     }
 
     // a level that was left without quitting: its label went with it, so it's only forgotten
     void forgetAutoplay() {
         autoplay = {};
+        buf.autoDangers.clear();
     }
 
     bool startAutoplay(std::string* why) {
@@ -4896,6 +4924,7 @@ namespace {
         // the game itself saves nothing (progress, completion, stars) in test mode
         layer->m_isTestMode = true;
         autoplay = {};
+        buf.autoDangers.clear();
         autoplay.active = true;
         autoplay.layer = layer;
         // started mid-run: this attempt's ticks don't count from the level start, so it isn't learned
@@ -5147,7 +5176,7 @@ namespace {
 
     // v3.0 test 21: a plan got further than the one it came from: try its last press a tick or two
     // earlier and later too (exact timings), ahead of everything else in the queue
-    void enqueueNeighbours(std::vector<int> const& plan, int score, int pressIndex) {
+    void enqueueNeighbours(PlanCtx const& c, std::vector<int> const& plan, int score, int pressIndex) {
         for (int d : { -2, -1, 1, 2 }) {
             std::vector<int> child = plan;
             for (size_t i = pressIndex; i < child.size(); ++i) {
@@ -5156,6 +5185,9 @@ namespace {
             int prev = pressIndex > 0 ? child[pressIndex - 1] : tickCount - 1;
             if (child[pressIndex] <= prev || child[pressIndex] < tickCount) {
                 continue;
+            }
+            if (c.banned && c.banned->count(c.at + child[pressIndex] - tickCount)) {
+                continue;  // test 26: a press that already failed there
             }
             if (autoplay.seen.insert(child).second) {
                 autoplay.queue.push_back({ score, std::move(child) });
@@ -5269,9 +5301,9 @@ namespace {
                 autoplay.knownTrail.push_back(autoplay.attemptTrail[i]);
             }
             say("autoplay remembers {} inputs ({} ticks of this level)", autoplay.known.size(), autoplay.knownUntil);
-            saveAutoplay();
             drawTrail();
         }
+        saveAutoplay();
     }
 
     // v3.0 test 24: a run to the end: the whole level is known and saved
@@ -5358,7 +5390,7 @@ namespace {
         }
         double left = frameBudget - autoplay.frameMs;
         if (autoplay.generating) {
-            left = 12.0;  // nothing is shown while the path is made: every tick may think properly
+            left = 3.0;  // test 26: short looks while it's safe, long ones only near a crash (below)
         }
         if (left < 0.25) {
             return;  // this frame's time is used up: keep following the plan, look again next frame
@@ -5427,7 +5459,7 @@ namespace {
                             --pressIndex;
                         }
                     }
-                    enqueueNeighbours(item.plan, len, pressIndex);
+                    enqueueNeighbours(c, item.plan, len, pressIndex);
                 }
                 if (len > survived) {
                     // only a plan that really lasts longer replaces the current one (v3.0 test 16
@@ -5483,6 +5515,9 @@ namespace {
             else {
                 autoplay.killer = "ghost didn't hit an object (fell out of the level, or stopped)";
             }
+        }
+        else {
+            autoplay.killer = "ghost thought this was safe";
         }
         buf.fullHorizon = false;
         buf.firstStep = savedStep;
@@ -7132,6 +7167,13 @@ class $modify(BufPlayLayer, PlayLayer) {
             say("  you hit object {} (type {}) at x {:.0f} y {:.0f} when at x {:.0f} y {:.0f} | {}", object ? object->m_objectID : 0,
                 object ? static_cast<int>(object->m_objectType) : -1, object ? object->getPositionX() : 0.f, object ? object->getPositionY() : 0.f,
                 player->getPositionX(), player->getPositionY(), autoplay.killer.empty() ? "no ghost report" : autoplay.killer);
+            // v3.0 test 26: the ghost didn't see what killed you: where you died is avoided from now on
+            if (expected && !replaying) {
+                auto r = player->getObjectRect();
+                float w = r.size.width * 0.6f, h = r.size.height * 0.6f;
+                buf.autoDangers.push_back(CCRect(r.getMidX() - w / 2.f, r.getMidY() - h / 2.f, w, h));
+                say("  the ghost didn't see this: the spot is marked, autoplay keeps out of it ({} marked)", buf.autoDangers.size());
+            }
             autoplay.diedThisAttempt = true;
         }
         if (buf.simulating && isGhost(player)) {
