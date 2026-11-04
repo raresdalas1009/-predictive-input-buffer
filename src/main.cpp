@@ -5883,7 +5883,7 @@ namespace {
         // v3.0 test 37: timings within 3 ticks of the one that failed aren't tried again; earlier
         // AND later ones are (test 32-36 only looked earlier, and a jump that had to be a bit later
         // was never found: Stereo Madness 20%)
-        for (int d = -st(3); d <= st(3); ++d) {
+        for (int d = -st(10); d <= st(10); ++d) {  // test 40: was 3 (it walked one jump down 7 ticks at a time)
             route.bannedFirst.insert(g.first + d);
         }
         route.afterTakeback = true;
@@ -6296,7 +6296,11 @@ namespace {
         }
         // what it learned in earlier attempts: replayed exactly, no searching
         // (not in an attempt autoplay was started in the middle of: the inputs are from the start)
-        if (!layer->m_isPracticeMode && !autoplay.userTouched && at < autoplay.knownUntil) {
+        // v3.0 test 40: not while the route plans (it replayed the inputs that led into a dead end
+        // right up to it, so the route had no room: Stereo Madness 60%, 3 deaths on the same tick).
+        // Only a whole level learned to the end is replayed.
+        bool replayOk = autoplay.knowsWholeLevel || layer->m_gameState.m_isDualMode;
+        if (replayOk && !layer->m_isPracticeMode && !autoplay.userTouched && at < autoplay.knownUntil) {
             while (autoplay.replayIdx < autoplay.known.size() && autoplay.known[autoplay.replayIdx].first <= at) {
                 if (autoplay.known[autoplay.replayIdx].first == at) {
                     autoplaySet(layer, autoplay.known[autoplay.replayIdx].second);
