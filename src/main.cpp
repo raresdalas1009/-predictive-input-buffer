@@ -4614,6 +4614,12 @@ namespace {
         std::vector<int> plan;  // absolute ticks at which to flip the button
         int verifyAt = -1;      // next tick to check the plan still works
         int sims = 0;           // planner budget used for one search
+        // v3.0 test 7: a time budget per frame (the "budget" setting), so planning never drops
+        // the frame rate; what doesn't fit goes on next frame while the current plan is followed
+        unsigned frame = 0;
+        double frameMs = 0.0;
+        std::chrono::steady_clock::time_point searchStart {};
+        double searchCap = 0.0;
         CCLabelBMFont* tag = nullptr;
     };
     Autoplay autoplay;
@@ -4704,7 +4710,15 @@ namespace {
 
     // depth-limited search: flips go in right before the ghost would die, latest first (late and
     // few flips is how a player plays); returns ticks survived, `best` gets the longest plan seen
+    bool planOutOfTime() {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - autoplay.searchStart).count() > autoplay.searchCap;
+    }
+
     int planSearch(PlanCtx const& c, std::vector<int>& rel, int depth, int budget, std::vector<int>& best, int& bestLen) {
+        if (planOutOfTime()) {
+            autoplay.sims = budget;  // stop here, carry on next frame
+            return -1;
+        }
         int survived = simulatePlan(c, rel);
         if (survived > bestLen || (survived == bestLen && rel.size() < best.size())) {
             bestLen = survived;
@@ -4763,6 +4777,17 @@ namespace {
         if (tickCount < autoplay.verifyAt) {
             return;
         }
+        unsigned frame = CCDirector::get()->getTotalFrames();
+        if (frame != autoplay.frame) {
+            autoplay.frame = frame;
+            autoplay.frameMs = 0.0;
+        }
+        double left = std::max(1.0, buf.userBudget) - autoplay.frameMs;
+        if (left < 0.25) {
+            return;  // this frame's time is used up: keep following the plan, look again next frame
+        }
+        autoplay.searchStart = std::chrono::steady_clock::now();
+        autoplay.searchCap = left;
 
         float savedStep = buf.firstStep;
         buf.firstStep = 1.f;  // autoplay acts at the start of a tick: the ghost's first step is whole
@@ -4773,37 +4798,44 @@ namespace {
         }
         autoplay.sims = 0;
         int survived = simulatePlan(c, rel);
+        bool changed = false;
         if (survived < c.horizon) {
-            // the plan (or doing nothing) crashes: find a new one, fewest flips first
-            std::vector<int> best;
-            int bestLen = -1;
-            int budget = 60;  // ghost runs per search (a few ms on PC; heavier on old phones)
-            for (int depth = 1; depth <= 8 && autoplay.sims < budget; ++depth) {
-                std::vector<int> start;
-                int r = planSearch(c, start, depth, budget, best, bestLen);
-                if (r >= c.horizon || bestLen >= c.horizon) {
-                    break;
-                }
+            std::vector<int> best = rel;
+            int bestLen = survived;
+            int budget = 60;
+            // 1. cheapest: keep the plan and add flips where it would crash
+            {
+                std::vector<int> ext = rel;
+                planSearch(c, ext, 4, budget, best, bestLen);
             }
+            // 2. if that didn't do it, a fresh plan, fewest flips first
+            for (int depth = 1; depth <= 8 && bestLen < c.horizon && autoplay.sims < budget && !planOutOfTime(); ++depth) {
+                std::vector<int> start;
+                planSearch(c, start, depth, budget, best, bestLen);
+            }
+            changed = best != rel;
             rel = best;
             survived = bestLen;
         }
         buf.fullHorizon = false;
         buf.firstStep = savedStep;
         sweepGhostLayer();
-        autoplay.plan.clear();
-        for (int t : rel) {
-            autoplay.plan.push_back(tickCount + t);
+        autoplay.frameMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - autoplay.searchStart).count();
+        if (changed) {
+            autoplay.plan.clear();
+            for (int t : rel) {
+                autoplay.plan.push_back(tickCount + t);
+            }
+            // flips due right now
+            while (!autoplay.plan.empty() && autoplay.plan.front() <= tickCount) {
+                autoplay.plan.erase(autoplay.plan.begin());
+                sendButton(layer, !buf.appliedInput);
+                ++autoplay.inputs;
+            }
         }
-        // flips due right now
-        while (!autoplay.plan.empty() && autoplay.plan.front() <= tickCount) {
-            autoplay.plan.erase(autoplay.plan.begin());
-            sendButton(layer, !buf.appliedInput);
-            ++autoplay.inputs;
-        }
-        // a working plan is re-checked now and then (moving things can change); a failing one
-        // is searched for again next tick
-        autoplay.verifyAt = tickCount + (survived >= c.horizon ? st(8) : 1);
+        // a working plan is re-checked now and then (moving things can change); one that still
+        // crashes is searched for again a little before the crash, not every tick
+        autoplay.verifyAt = tickCount + (survived >= c.horizon ? st(8) : std::clamp(survived - st(30), st(2), st(16)));
     }
 
     void tryAutoRelease(PlayLayer* layer, PlayerObject* p1) {
