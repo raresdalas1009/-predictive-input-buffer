@@ -5519,6 +5519,9 @@ namespace {
         int bestT = -1;  // test 29: the input that got furthest so far in this search
         int bestV = 0;
         int bestEnd = 0;
+        int orbT = -1;  // test 38: an input whose path reaches an orb the route hadn't touched
+        int orbV = 0;
+        int orbEnd = 0;
         int takebacks = 0;
         int frontier = 0;
         std::set<int> bannedFirst;
@@ -5795,6 +5798,8 @@ namespace {
         route.fine = false;
         route.bestT = -1;
         route.bestEnd = death;
+        route.orbT = -1;
+        route.orbEnd = 0;
         route.orbFirst.clear();
     }
 
@@ -5906,6 +5911,9 @@ namespace {
             if (route.windowHi >= 0) {
                 routeAccept(layer, p1, route.windowHi, route.lower, route.windowVariant);
             }
+            else if (route.orbT >= 0) {
+                routeAccept(layer, p1, route.orbT, route.orbT, route.orbV);  // test 38: toward the orb
+            }
             else if (route.bestT >= 0 && route.bestEnd >= route.death + st(6)) {
                 routeAccept(layer, p1, route.bestT, route.bestT, route.bestV);
             }
@@ -5935,6 +5943,19 @@ namespace {
         int length = route.death - cpTick + st(120);
         int lived = routeSim(layer, p1, cp, flips, length, false);
         bool ok = lived >= length;
+        if (!ok) {
+            // v3.0 test 38: does this input's path reach an orb (touched after the input)? Then the
+            // next search can click that orb (51% of Stereo Madness: a jump, then the orb above the
+            // pillar; the jump alone dies, so it never looked like the way)
+            for (auto const& [ring, touched] : buf.orbTouches) {
+                if (cpTick + touched > t && cpTick + lived >= route.death && cpTick + lived > route.orbEnd) {
+                    route.orbT = t;
+                    route.orbV = v;
+                    route.orbEnd = cpTick + lived;
+                    break;
+                }
+            }
+        }
         if (cpTick + lived > route.bestEnd) {
             route.bestEnd = cpTick + lived;
             route.bestT = t;
@@ -5996,6 +6017,22 @@ namespace {
         int length = std::min(st(240), tickCount + st(2400) - from.tick);
         if (length < st(12)) {
             return false;
+        }
+        // v3.0 test 38: still holding in a mode where holding means jumping again on every landing
+        // (a hold from the ship carried through a cube portal: it hopped along for no reason). Let
+        // go here if that does no worse.
+        if (from.held && !(from.snap->m_isDart || from.snap->m_isShip) && routeHeldAt(from.tick + 1) == from.held) {
+            int r = std::max(from.tick, tickCount + 1);
+            bool flipAtR = std::find(route.flips.begin(), route.flips.end(), r) != route.flips.end();
+            if (!flipAtR && (route.flips.empty() || route.flips.back() < r)) {
+                int keep = routeSim(layer, p1, from, route.flips, length, false);
+                auto f = route.flips;
+                f.push_back(r);
+                if (routeSim(layer, p1, from, f, length, false) >= keep) {
+                    route.flips.push_back(r);
+                    route.groups.push_back({ r, r });
+                }
+            }
         }
         int lived = routeSim(layer, p1, from, route.flips, length, true);
         for (auto const& c : routeNewCps) {
