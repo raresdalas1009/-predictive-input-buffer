@@ -7615,7 +7615,7 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
         // v3.0 test 14: while autoplay plays, physics steps are exactly 1/240 s even at the normal
         // 240 TPS. The game's own steps are frame time / step count, so the same inputs moved
         // you a little differently each attempt (replays went differently, the ghost guessed wrong)
-        bool fixedStep = autoplay.active && autoplay.layer == this;
+        bool fixedStep = autoplay.active && static_cast<GJBaseGameLayer*>(autoplay.layer) == static_cast<GJBaseGameLayer*>(this);
         if ((tps <= 240 && !fixedStep) || tpsDriving || !typeinfo_cast<PlayLayer*>(this)) {
             GJBaseGameLayer::update(dt);
             return;
