@@ -1343,6 +1343,8 @@ namespace {
         EffectGameObject* trigger;
         double x;
         TriggerKind kind;
+        bool touch = false;  // v3.0 test 31: a touch trigger (goes off when the player touches it)
+        CCRect rect {};
     };
     std::vector<LevelTrigger> levelTriggers;  // the level's position-activated triggers we predict, by x
     GJBaseGameLayer* levelTriggersLayer = nullptr;
@@ -1367,6 +1369,8 @@ namespace {
         CCArray* group = nullptr;  // toggle: the group it switches off (or on)
         bool on = false;           // toggle: switches it on
         bool armed = false;        // v2.85: fired (fireStep is when it acts, maybe after a spawn delay)
+        bool touch = false;        // v3.0 test 31: goes off when the ghost touches `rect`, not at x
+        CCRect rect {};
         int delay = 0;             // v2.85: steps from the ghost reaching x to it acting (spawn delays)
         bool toggled = false;
     };
@@ -1385,6 +1389,10 @@ namespace {
     std::vector<ScriptedObject> scriptedObjects;
     void forgetTriggerChecks();
     constexpr int SCRIPTED_TRIGGER_LIMIT = 48;
+    // v3.0 test 31: autoplay's route looks up to 10 s ahead: room for many more
+    int scriptedTriggerLimit() {
+        return buf.offscreenFill ? 400 : SCRIPTED_TRIGGER_LIMIT;
+    }
     // v2.85: groups the real game spawns after a delay, and the tick that happens
     struct PendingSpawn {
         int group;
@@ -1392,6 +1400,9 @@ namespace {
     };
     std::vector<PendingSpawn> pendingSpawns;
     constexpr int SCRIPTED_OBJECT_LIMIT = 160;
+    size_t scriptedObjectLimit() {
+        return buf.offscreenFill ? 1500 : SCRIPTED_OBJECT_LIMIT;
+    }
     // v2.84.4: what collectScripted found, reused by every run of the same click (it used to
     // scan the trigger groups again for every run: on ORBIT that slowed each run so much that
     // orb searches stopped after 0-2 timings)
@@ -1493,8 +1504,13 @@ namespace {
         if (rotate) {
             return t->m_rotationTargetID <= 0 && (t->m_rotationDegrees != 0.f || t->m_times360 != 0);
         }
-        return !t->m_useMoveTarget && !t->m_lockToPlayerX && !t->m_lockToPlayerY && !t->m_lockToCameraX && !t->m_lockToCameraY &&
-            (t->m_moveOffset.x != 0.f || t->m_moveOffset.y != 0.f);
+        if (t->m_lockToPlayerX || t->m_lockToPlayerY || t->m_lockToCameraX || t->m_lockToCameraY) {
+            return false;
+        }
+        if (t->m_useMoveTarget) {
+            return t->m_targetModCenterID > 0;  // v3.0 test 31: target mode (to another group's spot)
+        }
+        return t->m_moveOffset.x != 0.f || t->m_moveOffset.y != 0.f;
     }
 
     // v2.85: a spawn trigger the prediction can follow: no random delay, no remapped groups, not ordered
@@ -1529,24 +1545,26 @@ namespace {
                 continue;
             }
             auto* t = static_cast<EffectGameObject*>(object);
-            if (t->m_isSpawnTriggered || t->m_isTouchTriggered) {
+            if (t->m_isSpawnTriggered) {
                 continue;
             }
+            bool touch = t->m_isTouchTriggered;
+            CCRect rect = touch ? t->getObjectRect() : CCRect {};
             if (id == 1049) {
                 if (t->m_targetGroupID > 0) {
-                    levelTriggers.push_back({ t, t->m_positionX, TriggerKind::Toggle });  // v2.85: on too
+                    levelTriggers.push_back({ t, t->m_positionX, TriggerKind::Toggle, touch, rect });  // v2.85: on too
                 }
                 continue;
             }
             if (id == 1268) {
                 if (plainSpawn(t)) {
-                    levelTriggers.push_back({ t, t->m_positionX, TriggerKind::Spawn });
+                    levelTriggers.push_back({ t, t->m_positionX, TriggerKind::Spawn, touch, rect });
                 }
                 continue;
             }
             bool rotate = id == 1346;
             if (plainTrigger(t, rotate)) {
-                levelTriggers.push_back({ t, t->m_positionX, rotate ? TriggerKind::Rotate : TriggerKind::Move });
+                levelTriggers.push_back({ t, t->m_positionX, rotate ? TriggerKind::Rotate : TriggerKind::Move, touch, rect });
             }
         }
         std::sort(levelTriggers.begin(), levelTriggers.end(), [](auto const& a, auto const& b) { return a.x < b.x; });
@@ -1569,6 +1587,31 @@ namespace {
         if (kind == TriggerKind::Move) {
             m.dx = t->m_moveOffset.x;
             m.dy = t->m_moveOffset.y;
+            if (t->m_useMoveTarget) {
+                // v3.0 test 31: target mode: the group goes to where the target group is (its group
+                // parent, or its first object), measured from the center group (or the group itself)
+                auto spot = [&](int group) -> GameObject* {
+                    if (group <= 0) {
+                        return nullptr;
+                    }
+                    if (auto* parent = groupParentOf(layer, group)) {
+                        return parent;
+                    }
+                    auto* objects = layer->getGroup(group);
+                    return objects && objects->count() > 0 ? static_cast<GameObject*>(objects->objectAtIndex(0)) : nullptr;
+                };
+                auto* target = spot(t->m_targetModCenterID);
+                auto* from = spot(t->m_centerGroupID > 0 ? t->m_centerGroupID : t->m_targetGroupID);
+                m.dx = m.dy = 0.0;
+                if (target && from) {
+                    if (t->m_moveTargetMode != MoveTargetType::YOnly) {
+                        m.dx = target->m_positionX - from->m_positionX;
+                    }
+                    if (t->m_moveTargetMode != MoveTargetType::XOnly) {
+                        m.dy = target->m_positionY - from->m_positionY;
+                    }
+                }
+            }
             return;
         }
         m.angle = t->m_rotationDegrees + 360.0 * t->m_times360;
@@ -1850,6 +1893,16 @@ namespace {
         }
         double px = buf.ghost1->getPositionX();
         double py = buf.ghost1->getPositionY();
+        double pyLo = py, pyHi = py;
+        if (buf.simFrom && layer->m_player1) {
+            // v3.0 test 31: a route test from further along: the triggers from YOU on (test 27-30
+            // only took them from the test's start, so ones between you and it never moved anything)
+            double rx = layer->m_player1->getPositionX();
+            double ry = layer->m_player1->getPositionY();
+            px = std::min(px, rx);
+            pyLo = std::min(py, ry);
+            pyHi = std::max(py, ry);
+        }
         double reach = (total + 2) * std::max(static_cast<double>(std::abs(buf.tickDx)), 2.0) + 30.0;
         auto& cache = scriptedCache;
         if (cache.layer == layer && cache.tick == tickCount && reach <= cache.reach && std::abs(px - cache.px) < 3.0) {
@@ -1864,7 +1917,7 @@ namespace {
         // v2.84.4: only objects whose motion can come near the ghost's path (it was every object
         // within ~800 units either side, at any height)
         double pathMinX = px - 90.0, pathMaxX = px + reach + 90.0;
-        double pathMinY = py - 450.0, pathMaxY = py + 450.0;
+        double pathMinY = pyLo - 450.0, pathMaxY = pyHi + 450.0;
         auto nearPath = [&](GameObject* object, ScriptedMove const& m) {
             double x = object->m_positionX, y = object->m_positionY;
             double x0 = x, x1 = x, y0 = y, y1 = y;
@@ -1886,9 +1939,10 @@ namespace {
         };
         // adds trigger t: armed = it fires at step `when` (negative: it fired that long ago),
         // else when the ghost gets to x, `when` steps later (a spawn delay)
-        auto addMove = [&](EffectGameObject* t, double x, TriggerKind kind, bool armed, int when) {
+        auto addMove = [&](EffectGameObject* t, double x, TriggerKind kind, bool armed, int when, bool touch = false,
+                           CCRect touchRect = CCRect {}) {
             int elapsed = armed && when < 0 ? -when : -1;
-            if (static_cast<int>(scriptedMoves.size()) >= SCRIPTED_TRIGGER_LIMIT) {
+            if (static_cast<int>(scriptedMoves.size()) >= scriptedTriggerLimit()) {
                 return;
             }
             auto* group = layer->getGroup(t->m_targetGroupID);
@@ -1898,6 +1952,8 @@ namespace {
             ScriptedMove m;
             m.kind = kind;
             m.x = x;
+            m.touch = touch && !armed;
+            m.rect = touchRect;
             m.armed = armed;
             m.fireStep = armed ? when : -1;
             m.delay = armed ? 0 : when;
@@ -1923,7 +1979,7 @@ namespace {
                 }
                 auto [found, added] = index.try_emplace(object, scriptedObjects.size());
                 if (added) {
-                    if (scriptedObjects.size() >= SCRIPTED_OBJECT_LIMIT) {
+                    if (scriptedObjects.size() >= scriptedObjectLimit()) {
                         index.erase(found);
                         continue;
                     }
@@ -2004,10 +2060,12 @@ namespace {
                 continue;
             }
             if (it->kind == TriggerKind::Spawn) {
-                spawnChain(it->trigger->m_targetGroupID, it->x, false, spawnSteps(it->trigger, tickLength), 0);
+                if (!it->touch) {
+                    spawnChain(it->trigger->m_targetGroupID, it->x, false, spawnSteps(it->trigger, tickLength), 0);
+                }
             }
             else {
-                addMove(it->trigger, it->x, it->kind, false, 0);
+                addMove(it->trigger, it->x, it->kind, false, 0, it->touch, it->rect);
             }
         }
         buf.triggersAhead = static_cast<int>(scriptedMoves.size());
@@ -2044,9 +2102,9 @@ namespace {
 
     // the ghost reached x: triggers there go off (v2.85: after their spawn delay); a toggle
     // switches its group off (or on) for the rest of this prediction
-    void fireScripted(double gx, int tick) {
+    void fireScripted(double gx, CCRect const& ghostRect, int tick) {
         for (auto& m : scriptedMoves) {
-            if (!m.armed && gx >= m.x) {
+            if (!m.armed && (m.touch ? ghostRect.intersectsRect(m.rect) : gx >= m.x)) {
                 m.armed = true;
                 m.fireStep = tick + m.delay;
             }
@@ -2600,15 +2658,22 @@ namespace {
             double startX = buf.ghost1->getPositionX();
             auto const& rp = *buf.crossPos;
             for (auto& m : scriptedMoves) {
-                if (m.armed || m.x > startX) {
+                if (m.armed || m.x > startX + 60.0) {
                     continue;
                 }
-                int at = 0;
-                for (size_t k = 0; k < rp.size(); ++k) {
-                    if (rp[k].x >= m.x) {
+                int at = -1;
+                for (size_t k = 0; k < rp.size() && static_cast<int>(k) + buf.crossBase < off; ++k) {
+                    bool reached = m.touch ? CCRect(m.rect.origin.x - 15.f, m.rect.origin.y - 15.f, m.rect.size.width + 30.f,
+                                                 m.rect.size.height + 30.f)
+                                                 .containsPoint(rp[k])
+                                           : rp[k].x >= m.x;
+                    if (reached) {
                         at = buf.crossBase + static_cast<int>(k);
                         break;
                     }
+                }
+                if (at < 0) {
+                    continue;  // the route didn't get to it before this test starts: the test sets it off itself
                 }
                 m.armed = true;
                 m.fireStep = std::max(0, at) + m.delay;
@@ -2621,7 +2686,7 @@ namespace {
             }
             if (!scriptedMoves.empty()) {
                 // v2.81: a move / rotate / toggle trigger the ghost has reached goes off
-                fireScripted(buf.ghost1->getPositionX(), off + tick);
+                fireScripted(buf.ghost1->getPositionX(), buf.ghost1->getObjectRect(), off + tick);
                 placeScripted(off + tick + 1);
             }
             buf.simTick = tick;
