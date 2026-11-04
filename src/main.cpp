@@ -5538,7 +5538,9 @@ namespace {
     int routeReports = 0;
     int routeDrifts = 0;
     int routeRechecks = 0;
+    std::map<int, int> routeStuckSpots;
     void routeCountersReset() {
+        routeStuckSpots.clear();
         routeReports = 0;
         routeDrifts = 0;
         routeRechecks = 0;
@@ -5736,7 +5738,33 @@ namespace {
         route.changed = true;
     }
 
+    // v3.0 test 34: where the route got stuck (by level x, 60 units a slot) and how often. Kept for
+    // the level while autoplay is on: each time it's stuck at the same spot again, the next search
+    // there goes deeper (more take-backs, further back), so attempts make progress instead of
+    // getting stuck the same way every time
+
+    float routeXAt(int tick) {
+        int k = tick - route.posBase - 1;
+        if (k >= 0 && k < static_cast<int>(route.pos.size())) {
+            return route.pos[k].x;
+        }
+        return route.pos.empty() ? 0.f : route.pos.back().x;
+    }
+
+    int routeStuckHere(int tick) {
+        int slot = static_cast<int>(routeXAt(tick) / 60.f);
+        int n = 0;
+        for (int d = -1; d <= 1; ++d) {
+            auto it = routeStuckSpots.find(slot + d);
+            if (it != routeStuckSpots.end()) {
+                n = std::max(n, it->second);
+            }
+        }
+        return std::min(n, 6);
+    }
+
     void routeStuck(PlayLayer* layer, std::string why) {
+        ++routeStuckSpots[static_cast<int>(routeXAt(route.death) / 60.f)];
         route.sprinting = false;
         route.stuck = true;
         route.stuckAt = route.death;
@@ -5752,7 +5780,7 @@ namespace {
         route.sprinting = true;
         route.death = death;
         int lastFlip = route.flips.empty() ? -1000000 : route.flips.back();
-        route.lower = std::max({ death - st(240), lastFlip + 1, tickCount + 1, route.cps.front().tick });
+        route.lower = std::max({ death - st(240 + 60 * routeStuckHere(death)), lastFlip + 1, tickCount + 1, route.cps.front().tick });
         // v3.0 test 32: right after a take-back, only inputs BEFORE the one taken back: test 31 put
         // nearly the same input back a tick or two off (a wave turn at the same peak, 8 times over)
         route.cand = std::min(death - 1, route.beforeLimit - st(2));
@@ -5801,8 +5829,10 @@ namespace {
     }
 
     void routeTakeBack(PlayLayer* layer) {
-        if (route.groups.empty() || route.takebacks >= 8 || route.groups.back().first <= tickCount + 1) {
-            routeStuck(layer, fmt::format("no input in the second before it gets through ({} taken back)", route.takebacks));
+        int deeper = routeStuckHere(route.death);
+        if (route.groups.empty() || route.takebacks >= 8 + 6 * deeper || route.groups.back().first <= tickCount + 1) {
+            routeStuck(layer, fmt::format("no input in the second before it gets through ({} taken back, {} times stuck here before)",
+                                  route.takebacks, deeper));
             return;
         }
         auto g = route.groups.back();
