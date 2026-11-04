@@ -5284,10 +5284,15 @@ private:
             col(m_t.main, 0.25f));
         m_page->addChild(d0, 1);
         CCDrawNode* d = nullptr;
-        switchItem({ x + width - 18.f, y }, optionValue(o), menu_selector(BufferMenu::onToggle), static_cast<int>(m_options.size()), &d);
-        bool two = o.sub && rowH >= 20.f;
-        auto* l = label(m_page, o.label, 0.5f, optionValue(o) ? m_text : m_muted, { x + 7.f, two ? y + 4.f : y }, { 0.f, 0.5f });
-        l->limitLabelWidth(width - 44.f, 0.5f, 0.2f);
+        auto* sw = switchItem({ x + width - 18.f, y }, optionValue(o), menu_selector(BufferMenu::onToggle), static_cast<int>(m_options.size()), &d);
+        if (rowH < 17.f) {
+            sw->setScale(0.8f);
+            sw->m_baseScale = 0.8f;  // so a press doesn't spring it back to full size
+        }
+        bool two = o.sub && rowH >= 19.f;
+        float ls = rowH < 17.f ? 0.42f : 0.5f;
+        auto* l = label(m_page, o.label, ls, optionValue(o) ? m_text : m_muted, { x + 7.f, two ? y + 4.f : y }, { 0.f, 0.5f });
+        l->limitLabelWidth(width - 44.f, ls, 0.2f);
         if (two) {
             label(m_page, o.sub, 0.32f, m_muted, { x + 7.f, y - 5.5f }, { 0.f, 0.5f })->limitLabelWidth(width - 44.f, 0.32f, 0.15f);
         }
@@ -5681,21 +5686,23 @@ private:
         float colW = (w - 6.f) / 2.f;
         float y0 = top - sh - 6.f;
         // options (left)
-        float oh = 18.f + std::size(STAGE_OPTIONS) * 23.f;
+        float oh = 20.f + std::size(STAGE_OPTIONS) * 21.f;
         card({ x, y0 - oh, colW, oh }, "Options");
         for (size_t i = 0; i < std::size(STAGE_OPTIONS); ++i) {
-            optionRow(STAGE_OPTIONS[i], x + 5.f, y0 - 30.f - i * 23.f, colW - 10.f, 22.f);
+            optionRow(STAGE_OPTIONS[i], x + 5.f, y0 - 30.f - i * 21.f, colW - 10.f, 20.f);
         }
         // quick (left, under options)
         float qTop = y0 - oh - 6.f;
         float qBottom = FOOT + 6.f;
-        card({ x, qBottom, colW, qTop - qBottom }, "Quick");
-        label(m_page, "Made by", 0.42f, m_muted, { x + 10.f, qTop - 26.f }, { 0.f, 0.5f });
-        label(m_page, "BASU", 0.5f, m_text, { x + 50.f, qTop - 26.f }, { 0.f, 0.5f }, true);
+        card({ x, qBottom, colW, qTop - qBottom }, "Quick", "made by BASU");
+        // the two rows sit evenly in what's left under the title (v3 test 6: they hung out of the card)
+        float inner = qTop - 20.f - qBottom;
+        float r1 = qTop - 20.f - inner * 0.3f;
+        float r2 = qBottom + inner * 0.28f;
         float qb = (colW - 22.f) / 2.f;
-        button(m_pageMenu, "Run Check", menu_selector(BufferMenu::onRunCheck), { x + colW / 2.f, qTop - 46.f }, colW - 16.f, true);
-        button(m_pageMenu, "Changelog", menu_selector(BufferMenu::onChangelog), { x + 8.f + qb / 2.f, qTop - 68.f }, qb);
-        button(m_pageMenu, "Statistics", menu_selector(BufferMenu::onStats), { x + 14.f + qb * 1.5f, qTop - 68.f }, qb);
+        button(m_pageMenu, "Run Check", menu_selector(BufferMenu::onRunCheck), { x + colW / 2.f, r1 }, colW - 16.f, true);
+        button(m_pageMenu, "Changelog", menu_selector(BufferMenu::onChangelog), { x + 8.f + qb / 2.f, r2 }, qb);
+        button(m_pageMenu, "Statistics", menu_selector(BufferMenu::onStats), { x + 14.f + qb * 1.5f, r2 }, qb);
         // custom (right)
         float rx = x + colW + 6.f;
         card({ rx, FOOT + 6.f, colW, y0 - FOOT - 6.f }, "Custom", "per gamemode");
@@ -5850,7 +5857,7 @@ private:
             label(m_page, "Pause Menu Button", 0.48f, m_text, { x + 12.f, y + 3.5f }, { 0.f, 0.5f });
             label(m_page, "The heart button in the pause menu", 0.3f, m_muted, { x + 12.f, y - 5.f }, { 0.f, 0.5f });
             switchItem({ x + colW - 23.f, y }, Mod::get()->getSavedValue<bool>("pause-button", true), menu_selector(BufferMenu::onPauseButton), 0, &sw);
-            y -= 22.f;
+            y -= 21.f;
         }
         auto row = [&](char const* name) {
             auto* d0 = CCDrawNode::create();
@@ -5861,26 +5868,30 @@ private:
         };
         row("Window Size");
         m_scaleLabel = stepper({ x + colW - 9.f, y }, menu_selector(BufferMenu::onScale));
-        y -= 20.f;
+        y -= 19.f;
         row("Window Opacity");
         m_opacityLabel = stepper({ x + colW - 9.f, y }, menu_selector(BufferMenu::onOpacity));
-        y -= 20.f;
+        y -= 19.f;
         row("Physics TPS");
         m_tpsLabel = stepper({ x + colW - 9.f, y }, menu_selector(BufferMenu::onTps));
-        y -= 20.f;
-        label(m_page, "Helpers", 0.46f, m_text, { x + 9.f, y - 1.f }, { 0.f, 0.5f });
-        y -= 14.f;
+        y -= 17.f;
+        label(m_page, "Helpers", 0.44f, m_text, { x + 9.f, y }, { 0.f, 0.5f });
+        // the helper rows share what's left of the card, down to its bottom edge
+        float rowsTop = y - 12.f;
+        float rowH = std::min(16.f, (rowsTop - (FOOT + 12.f)) / (std::size(HELPERS) - 0.5f));
+        y = rowsTop;
         for (size_t i = 0; i < std::size(HELPERS); ++i) {
-            optionRow(HELPERS[i], x + 5.f, y, colW - 10.f, 15.f);
-            y -= 15.f;
+            optionRow(HELPERS[i], x + 5.f, y, colW - 10.f, rowH);
+            y -= rowH;
         }
         // gameplay (right)
         float rx = x + colW + 6.f;
         card({ rx, FOOT + 6.f, colW, top - FOOT - 6.f }, "Gameplay", "prediction");
         float ry = top - 30.f;
+        float prH = std::min(20.f, (ry - (FOOT + 40.f)) / (std::size(PREDICTION) - 0.5f));
         for (size_t i = 0; i < std::size(PREDICTION); ++i) {
-            optionRow(PREDICTION[i], rx + 5.f, ry, colW - 10.f, 20.f);
-            ry -= 20.f;
+            optionRow(PREDICTION[i], rx + 5.f, ry, colW - 10.f, prH);
+            ry -= prH;
         }
         button(m_pageMenu, "All Geode Settings", menu_selector(BufferMenu::onAllSettings), { rx + colW / 2.f, FOOT + 18.f }, colW - 16.f);
     }
