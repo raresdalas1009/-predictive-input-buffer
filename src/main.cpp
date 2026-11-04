@@ -4636,6 +4636,7 @@ namespace {
         int lastDeath = -1;
         int sameDeaths = 0;
         bool diedThisAttempt = false;  // noclip (Mega Hack) calls "death" every tick: count one
+        int reports = 0;               // v3.0 test 15: search reports logged this attempt
         CCLabelBMFont* tag = nullptr;
     };
     Autoplay autoplay;
@@ -4884,6 +4885,7 @@ namespace {
         autoplay.replayIdx = 0;
         autoplay.userTouched = false;
         autoplay.diedThisAttempt = false;
+        autoplay.reports = 0;
     }
 
     // a death: keep this attempt's inputs up to a bit before it (normal mode, bot-only attempts)
@@ -5007,6 +5009,18 @@ namespace {
                 planSearch(c, start, depth, budget, best, bestLen);
             }
             changed = best != rel;
+            // v3.0 test 15: what the search saw (a few per attempt), to find why a jump isn't found
+            if (autoplay.reports < 6 && (survived < st(45) || changed)) {
+                ++autoplay.reports;
+                double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - autoplay.searchStart).count();
+                std::string flips;
+                for (int t : best) {
+                    flips += fmt::format(" {}", t);
+                }
+                say("autoplay search at tick {} ({}): now {} of {} ticks, best {}{} | {} runs, {:.1f} of {:.1f} ms{}", at,
+                    MODE_NAMES[modeIndex(p1, p2)], survived, c.horizon, bestLen, best.empty() ? " (no input)" : " with flips at" + flips,
+                    autoplay.sims, ms, autoplay.searchCap, planOutOfTime() ? " (out of time)" : "");
+            }
             rel = best;
             survived = bestLen;
         }
