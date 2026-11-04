@@ -4625,8 +4625,11 @@ namespace {
         // death the ones up to a bit before it are replayed exactly next attempt, and the search
         // only runs past them. Dying at the same spot again and again forgets further back.
         int attemptTick = 0;
-        std::vector<int> attemptFlips;
-        std::vector<int> known;
+        // v3.0 test 10: inputs are kept as states (tick, pressed) and every attempt starts let go,
+        // so a replay is the same each time (flips replayed from a held start came out inverted)
+        std::vector<std::pair<int, bool>> attemptFlips;
+        std::vector<std::pair<int, bool>> known;
+        int planSafeUntil = -1;  // attempt tick until which the current plan was expected to survive
         int knownUntil = 0;
         size_t replayIdx = 0;
         bool userTouched = false;
@@ -4813,14 +4816,25 @@ namespace {
         return survived;
     }
 
-    void autoplayFlip(PlayLayer* layer) {
-        sendButton(layer, !buf.appliedInput);
+    void autoplaySet(PlayLayer* layer, bool down) {
+        if (buf.appliedInput == down) {
+            return;
+        }
+        sendButton(layer, down);
         ++autoplay.inputs;
-        autoplay.attemptFlips.push_back(autoplay.attemptTick - 1);
+        autoplay.attemptFlips.push_back({ autoplay.attemptTick - 1, down });
+    }
+
+    void autoplayFlip(PlayLayer* layer) {
+        autoplaySet(layer, !buf.appliedInput);
     }
 
     // a new attempt: the learned inputs are replayed from the start again
-    void autoplayAttemptStart() {
+    void autoplayAttemptStart(PlayLayer* layer) {
+        if (buf.appliedInput) {
+            sendButton(layer, false);  // always start let go
+        }
+        autoplay.planSafeUntil = -1;
         autoplay.attemptTick = 0;
         autoplay.attemptFlips.clear();
         autoplay.plan.clear();
@@ -4848,8 +4862,8 @@ namespace {
         if (keepUntil > autoplay.knownUntil || autoplay.sameDeaths >= 2) {
             autoplay.knownUntil = std::max(0, keepUntil);
             autoplay.known.clear();
-            for (int f : autoplay.attemptFlips) {
-                if (f < autoplay.knownUntil) {
+            for (auto const& f : autoplay.attemptFlips) {
+                if (f.first < autoplay.knownUntil) {
                     autoplay.known.push_back(f);
                 }
             }
@@ -4871,9 +4885,9 @@ namespace {
         int at = autoplay.attemptTick++;
         // what it learned in earlier attempts: replayed exactly, no searching
         if (!layer->m_isPracticeMode && at < autoplay.knownUntil) {
-            while (autoplay.replayIdx < autoplay.known.size() && autoplay.known[autoplay.replayIdx] <= at) {
-                if (autoplay.known[autoplay.replayIdx] == at) {
-                    autoplayFlip(layer);
+            while (autoplay.replayIdx < autoplay.known.size() && autoplay.known[autoplay.replayIdx].first <= at) {
+                if (autoplay.known[autoplay.replayIdx].first == at) {
+                    autoplaySet(layer, autoplay.known[autoplay.replayIdx].second);
                 }
                 ++autoplay.replayIdx;
             }
@@ -4956,6 +4970,7 @@ namespace {
                 autoplayFlip(layer);
             }
         }
+        autoplay.planSafeUntil = at + survived;
         // a working plan is re-checked now and then (moving things can change); one that still
         // crashes is searched for again a little before the crash, not every tick
         autoplay.verifyAt = tickCount + (survived >= c.horizon ? st(8) : std::clamp(survived - st(30), st(2), st(16)));
@@ -6576,7 +6591,14 @@ class $modify(BufPlayLayer, PlayLayer) {
         // every attempt; that isn't a death, and it made autoplay learn nothing)
         if (autoplay.active && !buf.simulating && player == m_player1 && !player->m_isDead && object != m_anticheatSpike &&
             !autoplay.diedThisAttempt) {
-            say("autoplay died at {:.1f}% ({} inputs)", getCurrentPercent(), autoplay.inputs);
+            int at = autoplay.attemptTick;
+            bool replaying = at <= autoplay.knownUntil;
+            bool expected = autoplay.planSafeUntil > at + 2;
+            say("autoplay died at {:.1f}% as {} (tick {}): {}", getCurrentPercent(), MODE_NAMES[modeIndex(m_player1, m_gameState.m_isDualMode ? m_player2 : nullptr)], at,
+                replaying ? "while replaying what it learned (the replay went differently)"
+                          : expected ? fmt::format("the ghost expected to survive {} more ticks (prediction was wrong here)",
+                                           autoplay.planSafeUntil - at)
+                                     : "no safe route was found in time (search)");
             autoplay.diedThisAttempt = true;
         }
         if (buf.simulating && isGhost(player)) {
@@ -6875,7 +6897,7 @@ class $modify(BufPlayLayer, PlayLayer) {
         // Now the mod only presses when you press.
         syncHeld(this);
         if (autoplay.active) {
-            autoplayAttemptStart();
+            autoplayAttemptStart(this);
         }
     }
 
