@@ -4665,6 +4665,17 @@ namespace {
         std::string saveKey;
         size_t levelHash = 0;
         CCDrawNode* trailNode = nullptr;
+        // v3.0 test 25: making the path. On start the level is played hidden, many times faster
+        // than normal and with time to think at every jump, until it reaches the end; then the
+        // whole trail is known and the run you see follows it from the start.
+        bool generating = false;
+        bool needRestart = false;
+        int genAttempts = 0;
+        float genBest = 0.f;
+        std::chrono::steady_clock::time_point genStart {};
+        std::chrono::steady_clock::time_point genEnded {};
+        CCLayerColor* genCover = nullptr;
+        CCLabelBMFont* genText = nullptr;
         CCLabelBMFont* tag = nullptr;
     };
     Autoplay autoplay;
@@ -4784,12 +4795,62 @@ namespace {
             ", it follows the trail from the next attempt");
     }
 
+    void endGenerating(char const* result) {
+        if (!autoplay.generating) {
+            return;
+        }
+        autoplay.generating = false;
+        autoplay.genEnded = std::chrono::steady_clock::now();
+        if (autoplay.genCover) {
+            autoplay.genCover->removeFromParent();
+            autoplay.genCover = nullptr;
+            autoplay.genText = nullptr;
+        }
+        FMODAudioEngine::sharedEngine()->resumeAllAudio();
+        double secs = std::chrono::duration<double>(autoplay.genEnded - autoplay.genStart).count();
+        say("autoplay path: {} ({} attempts, {:.0f} s, best {:.1f}%)", result, autoplay.genAttempts, secs, autoplay.genBest);
+    }
+
+    void beginGenerating(PlayLayer* layer) {
+        auto win = CCDirector::get()->getWinSize();
+        autoplay.generating = true;
+        autoplay.genAttempts = 0;
+        autoplay.genBest = 0.f;
+        autoplay.genStart = std::chrono::steady_clock::now();
+        autoplay.genCover = CCLayerColor::create({ 8, 10, 16, 255 });
+        autoplay.genCover->setID("autoplay-making-path"_spr);
+        auto* title = CCLabelBMFont::create("Making the path...", "bigFont.fnt");
+        title->setScale(0.7f);
+        title->setPosition({ win.width / 2.f, win.height / 2.f + 22.f });
+        autoplay.genCover->addChild(title);
+        autoplay.genText = CCLabelBMFont::create("0%", "goldFont.fnt");
+        autoplay.genText->setScale(0.75f);
+        autoplay.genText->setPosition({ win.width / 2.f, win.height / 2.f - 12.f });
+        autoplay.genCover->addChild(autoplay.genText);
+        auto* hint = CCLabelBMFont::create("Autoplay plays the level hidden until it reaches the end. Pause to stop.", "chatFont.fnt");
+        hint->setScale(0.6f);
+        hint->setOpacity(170);
+        hint->setPosition({ win.width / 2.f, win.height / 2.f - 42.f });
+        autoplay.genCover->addChild(hint);
+        layer->addChild(autoplay.genCover, 999);
+        say("autoplay is making the path: it plays the level hidden until the end");
+    }
+
+    void updateGenText(PlayLayer* layer) {
+        autoplay.genBest = std::max(autoplay.genBest, layer->getCurrentPercent());
+        if (autoplay.genText) {
+            double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - autoplay.genStart).count();
+            autoplay.genText->setString(fmt::format("{:.0f}%  -  {} attempts  -  {:.0f}s", autoplay.genBest, autoplay.genAttempts, secs).c_str());
+        }
+    }
+
     void stopAutoplay(char const* why) {
         if (!autoplay.active) {
             return;
         }
         auto* layer = GameManager::get()->m_playLayer;
         if (layer && layer == autoplay.layer) {
+            endGenerating("stopped");
             if (autoplay.tag) {
                 autoplay.tag->removeFromParent();
             }
@@ -4857,6 +4918,13 @@ namespace {
         (layer->m_aboveShaderObjectLayer ? layer->m_aboveShaderObjectLayer : layer->m_objectLayer)->addChild(autoplay.trailNode, 9998);
         loadAutoplay(layer);
         drawTrail();
+        if (!layer->m_isPracticeMode) {
+            // the path is from the level start: the run starts over
+            autoplay.needRestart = true;
+            if (!autoplay.knowsWholeLevel && !autoplay.takeOver) {
+                beginGenerating(layer);
+            }
+        }
         return true;
     }
 
@@ -5218,6 +5286,10 @@ namespace {
         saveAutoplay();
         drawTrail();
         say("autoplay finished the level: the whole run is saved, it plays it the same from the first attempt next time");
+        if (autoplay.generating) {
+            endGenerating("reached the end");
+            autoplay.needRestart = true;  // now the run you see, along the trail
+        }
     }
 
     void autoplayTick(PlayLayer* layer, PlayerObject* p1) {
@@ -5285,6 +5357,9 @@ namespace {
             frameBudget *= 3.0;  // the first ticks of an attempt or a respawn: plan properly at once
         }
         double left = frameBudget - autoplay.frameMs;
+        if (autoplay.generating) {
+            left = 12.0;  // nothing is shown while the path is made: every tick may think properly
+        }
         if (left < 0.25) {
             return;  // this frame's time is used up: keep following the plan, look again next frame
         }
@@ -5308,7 +5383,7 @@ namespace {
         bool changed = seeded;
         if (survived < st(30)) {
             // a crash is close: this frame may take longer (a tiny hitch beats a death)
-            autoplay.searchCap = std::max(autoplay.searchCap, frameBudget * 2.0);
+            autoplay.searchCap = std::max(autoplay.searchCap, autoplay.generating ? 40.0 : frameBudget * 2.0);
         }
         if (survived >= c.horizon) {
             autoplay.stuck = 0;
@@ -7318,8 +7393,25 @@ class $modify(BufPlayLayer, PlayLayer) {
     }
 
     void levelComplete() {
+        bool wasGenerating = autoplay.active && autoplay.layer == this && autoplay.generating;
         autoplayFinished(this);
+        if (wasGenerating) {
+            return;  // the hidden run reached the end: no end screen, the shown run starts next frame
+        }
         PlayLayer::levelComplete();
+    }
+
+    // v3.0 test 25: while the path is made a death restarts at once (the game's own restart a
+    // second later would cut into the next attempt)
+    void delayedResetLevel() {
+        if (autoplay.active && autoplay.layer == this) {
+            double since = std::chrono::duration<double>(std::chrono::steady_clock::now() - autoplay.genEnded).count();
+            bool justEnded = autoplay.genEnded.time_since_epoch().count() != 0 && since < 1.5 && !(m_player1 && m_player1->m_isDead);
+            if (autoplay.generating || justEnded) {
+                return;
+            }
+        }
+        PlayLayer::delayedResetLevel();
     }
 
     void resetLevel() {
@@ -8029,6 +8121,50 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
             return;
         }
         double step = 1.0 / std::max(tps, 240);
+        if (fixedStep) {
+            auto* pl = static_cast<PlayLayer*>(static_cast<GJBaseGameLayer*>(this));
+            if (autoplay.needRestart) {
+                autoplay.needRestart = false;
+                tpsCarry = 0.0;
+                pl->resetLevel();
+                return;
+            }
+            if (autoplay.generating) {
+                // v3.0 test 25: the hidden run, as many steps as fit in ~30 ms of this frame
+                auto begin = std::chrono::steady_clock::now();
+                tpsDriving = true;
+                int steps = 0;
+                while (autoplay.generating && steps < 20000 &&
+                       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count() < 30.0) {
+                    GJBaseGameLayer::update(static_cast<float>(step));
+                    ++steps;
+                    if (!autoplay.generating || !autoplay.active) {
+                        break;
+                    }
+                    if (pl->m_player1 && pl->m_player1->m_isDead) {
+                        updateGenText(pl);
+                        ++autoplay.genAttempts;
+                        tpsDriving = false;
+                        pl->resetLevel();
+                        tpsDriving = true;
+                        if (autoplay.sameDeaths >= 40) {
+                            endGenerating("stuck at one spot, plays what it has");
+                        }
+                    }
+                }
+                tpsDriving = false;
+                tpsCarry = 0.0;
+                if (autoplay.generating) {
+                    updateGenText(pl);
+                    FMODAudioEngine::sharedEngine()->pauseAllAudio();
+                }
+                if (autoplay.needRestart) {
+                    autoplay.needRestart = false;
+                    pl->resetLevel();
+                }
+                return;
+            }
+        }
         tpsCarry += dt;
         int steps = static_cast<int>(tpsCarry / step);
         int cap = std::max(1, std::max(tps, 240) / 15);  // after a lag spike, catch up at most 1/15 s
