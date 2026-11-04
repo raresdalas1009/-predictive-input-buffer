@@ -311,6 +311,21 @@ namespace {
         // v3.0 test 26: spots where autoplay really died although the ghost thought it was safe
         // (something the ghost can't see). Its ghost counts touching them as a death.
         std::vector<CCRect> autoDangers;
+        // v3.0 test 27, the route: a prediction can start from a saved hidden-player state further
+        // along (simFrom, simOffset ticks from now) instead of from you, and save states on the way
+        PlayerObject* simFrom = nullptr;
+        bool simFromHeld = false;
+        int simOffset = 0;
+        int cpEvery = 0;
+        void (*cpSink)(int, PlayerObject*, bool) = nullptr;
+        std::vector<CCPoint> const* crossPos = nullptr;  // the route's positions (for triggers it already passed)
+        int crossBase = 0;                               // crossPos[k] is after tick crossBase + k (from now)
+        // v3.0 test 27: GD only gives a player the objects near the camera; a hidden player past the
+        // screen gets the rest from this index of the level (built when autoplay starts)
+        bool offscreenFill = false;
+        std::unordered_map<int, std::vector<GameObject*>> objIndex;
+        std::unordered_set<GameObject*> seenThisCheck;
+        bool inCheck = false;
         int pathHoldUntil = 0;       // v2.65: live path waits while a click's path is on screen
 
         std::unordered_set<GameObject*> simUsed;
@@ -2464,7 +2479,10 @@ namespace {
         ghost->m_collisionLogBottom->removeAllObjects();
         ghost->m_collisionLogLeft->removeAllObjects();
         ghost->m_collisionLogRight->removeAllObjects();
+        buf.seenThisCheck.clear();
+        buf.inCheck = true;
         layer->checkCollisions(ghost, dt, false);
+        buf.inCheck = false;
         if (buf.simulating && !buf.ghostDied && !buf.autoDangers.empty()) {
             auto r = ghost->getObjectRect();
             for (auto const& d : buf.autoDangers) {
@@ -2526,13 +2544,15 @@ namespace {
         // v2.78.1: always known, so mode portals you're still inside are skipped (see
         // collisionCheckObjects)
         buf.haveStartRects = true;
-        buf.realRect1 = p1->getObjectRect();
+        PlayerObject* from1 = buf.simFrom ? buf.simFrom : p1;
+        buf.realRect1 = from1->getObjectRect();
         buf.realRect2 = second ? p2->getObjectRect() : buf.realRect1;
-        copyState(buf.ghost1, p1);
+        copyState(buf.ghost1, from1);
         if (second) {
             copyState(buf.ghost2, p2);
         }
-        buf.held1 = buf.held2 = buf.appliedInput;
+        buf.held1 = buf.held2 = buf.simFrom ? buf.simFromHeld : buf.appliedInput;
+        int off = buf.simFrom ? buf.simOffset : 0;
         buf.auto1 = buf.auto2 = false;
         buf.autoAt1 = buf.autoAt2 = -1;
 
@@ -2573,16 +2593,36 @@ namespace {
         bool safe = false;
 
         collectMovers();
-        collectScripted(layer, total);
+        collectScripted(layer, off + total);
+        if (off > 0 && buf.crossPos) {
+            // test 27: starting further along the route: triggers between you and the start went
+            // off when the route passed them
+            double startX = buf.ghost1->getPositionX();
+            auto const& rp = *buf.crossPos;
+            for (auto& m : scriptedMoves) {
+                if (m.armed || m.x > startX) {
+                    continue;
+                }
+                int at = 0;
+                for (size_t k = 0; k < rp.size(); ++k) {
+                    if (rp[k].x >= m.x) {
+                        at = buf.crossBase + static_cast<int>(k);
+                        break;
+                    }
+                }
+                m.armed = true;
+                m.fireStep = std::max(0, at) + m.delay;
+            }
+        }
         for (; tick < total; ++tick) {
             second = buf.simSecond;  // v2.84: after a solo portal only P1 goes on (v2.85: after a dual portal both)
             if (!movers.empty()) {
-                placeMovers(tick + 1);  // where they'll be after this step
+                placeMovers(off + tick + 1);  // where they'll be after this step
             }
             if (!scriptedMoves.empty()) {
                 // v2.81: a move / rotate / toggle trigger the ghost has reached goes off
-                fireScripted(buf.ghost1->getPositionX(), tick);
-                placeScripted(tick + 1);
+                fireScripted(buf.ghost1->getPositionX(), off + tick);
+                placeScripted(off + tick + 1);
             }
             buf.simTick = tick;
             // v2.26: orb auto-clicks that wait a few ticks into the orb fire here, if the
@@ -2666,6 +2706,9 @@ namespace {
             }
             if (buf.recordPath) {
                 buf.recordPath->push_back(buf.ghost1->getPosition());
+            }
+            if (buf.cpSink && buf.cpEvery > 0 && (tick + 1) % buf.cpEvery == 0) {
+                buf.cpSink(tick + 1, buf.ghost1, buf.held1);  // test 27: a route state to go on from
             }
             if (buf.ghostHitPortal) {
                 safe = tick >= delay;
@@ -4821,6 +4864,11 @@ namespace {
             ", it follows the trail from the next attempt");
     }
 
+    void routeReset();
+    void makeSnaps(PlayLayer* layer);
+    void dropSnaps(bool release);
+    void buildObjIndex(PlayLayer* layer);
+
     void endGenerating(char const* result) {
         if (!autoplay.generating) {
             return;
@@ -4893,12 +4941,17 @@ namespace {
             }
         }
         say("autoplay off{} ({} inputs)", why, autoplay.inputs);
+        routeReset();
+        buf.objIndex.clear();
         autoplay = {};
         buf.autoDangers.clear();
     }
 
     // a level that was left without quitting: its label went with it, so it's only forgotten
     void forgetAutoplay() {
+        routeReset();
+        dropSnaps(false);  // the level they belonged to is gone
+        buf.objIndex.clear();
         autoplay = {};
         buf.autoDangers.clear();
     }
@@ -4947,13 +5000,17 @@ namespace {
         (layer->m_aboveShaderObjectLayer ? layer->m_aboveShaderObjectLayer : layer->m_objectLayer)->addChild(autoplay.trailNode, 9998);
         loadAutoplay(layer);
         drawTrail();
-        if (!layer->m_isPracticeMode) {
-            // the path is from the level start: the run starts over
-            autoplay.needRestart = true;
-            if (!autoplay.knowsWholeLevel && !autoplay.takeOver) {
-                beginGenerating(layer);
+        // v3.0 test 27: no "making the path" screen any more: the route is planned while it plays
+        makeSnaps(layer);
+        buildObjIndex(layer);
+        routeReset();
+        say("autoplay: the route is planned up to 10 s ahead while it plays ({} level objects indexed)", [] {
+            size_t n = 0;
+            for (auto const& [k, v] : buf.objIndex) {
+                n += v.size();
             }
-        }
+            return n;
+        }());
         return true;
     }
 
@@ -5248,6 +5305,7 @@ namespace {
         autoplay.attemptFlips.clear();
         autoplay.attemptTrail.clear();
         autoplay.plan.clear();
+        routeReset();
         autoplay.verifyAt = -1;
         autoplay.replayIdx = 0;
         autoplay.userTouched = false;
@@ -5324,6 +5382,538 @@ namespace {
         }
     }
 
+    // ===== v3.0 test 27: the route =====
+    // A route is planned from where you are toward the end of the level (up to 10 s ahead), a bit
+    // more every tick. Hidden-player states are saved along it every 0.2 s, so it grows from its
+    // end (not from you every time). Where it dies, an input is tried one tick earlier at a time
+    // (latest first), and the middle of the window that works is kept. Nothing works: the last
+    // input is taken back and it looks before it (up to 8 times). You're checked against the
+    // route every tick; off it, it plans again from where you are.
+    struct RoutePoint {
+        int tick;  // the state at the start of this tick (before its inputs)
+        PlayerObject* snap;
+        bool held;
+    };
+    struct RouteGroup {
+        int first;
+        int last;
+    };
+    struct Route {
+        bool active = false;
+        int origin = 0;
+        bool originHeld = false;
+        std::vector<int> flips;  // absolute ticks the button flips at, ascending
+        std::vector<RouteGroup> groups;
+        std::vector<RoutePoint> cps;
+        std::vector<CCPoint> pos;  // pos[k]: where the route is after tick posBase + k
+        int posBase = 0;
+        int end = 0;  // the route is planned up to the start of this tick
+        bool sprinting = false;
+        int death = 0;
+        int cand = 0;
+        int lower = 0;
+        int variant = 0;
+        int windowHi = -1;
+        int windowVariant = 0;
+        int takebacks = 0;
+        int frontier = 0;
+        std::set<int> bannedFirst;
+        bool stuck = false;
+        int stuckAt = 0;
+        int drawnAt = -1000;
+        bool changed = false;
+        std::string why;
+    };
+    Route route;
+    int routeReports = 0;
+    int routeDrifts = 0;
+    constexpr int SNAP_MAX = 48;
+    std::vector<PlayerObject*> snapFree;
+    std::vector<PlayerObject*> snapAll;
+    CCLayer* snapLayer = nullptr;
+    PlayLayer* snapOwner = nullptr;
+
+    // the saved states are hidden players of their own, made once per level when autoplay starts
+    void makeSnaps(PlayLayer* layer) {
+        if (snapOwner != layer) {
+            snapFree.clear();  // another level's: let go of in onQuit (or left, see dropSnaps)
+            snapAll.clear();
+            snapLayer = nullptr;
+            snapOwner = layer;
+        }
+        if (!snapLayer) {
+            snapLayer = CCLayer::create();
+            snapLayer->retain();
+        }
+        while (snapAll.size() < static_cast<size_t>(SNAP_MAX)) {
+            auto* s = PlayerObject::create(1, 1, layer, snapLayer, true);
+            s->retain();
+            s->setVisible(false);
+            snapLayer->addChild(s);
+            snapAll.push_back(s);
+            snapFree.push_back(s);
+        }
+    }
+
+    void dropSnaps(bool release) {
+#ifdef GEODE_IS_ANDROID
+        release = false;  // like the ghosts (v2.87): never deleted while a level closes on Android
+#endif
+        if (release) {
+            for (auto* s : snapAll) {
+                s->removeFromParentAndCleanup(true);
+                s->release();
+            }
+            if (snapLayer) {
+                snapLayer->removeAllChildrenWithCleanup(true);
+                snapLayer->release();
+            }
+        }
+        snapAll.clear();
+        snapFree.clear();
+        snapLayer = nullptr;
+        snapOwner = nullptr;
+    }
+
+    PlayerObject* takeSnap() {
+        if (snapFree.empty()) {
+            return nullptr;
+        }
+        auto* s = snapFree.back();
+        snapFree.pop_back();
+        return s;
+    }
+
+    void routeReset() {
+        for (auto& c : route.cps) {
+            snapFree.push_back(c.snap);
+        }
+        route = {};
+    }
+
+    void routeKeepCps(int upTo) {
+        // the saved states after `upTo` belong to a route that changed there
+        while (route.cps.size() > 1 && route.cps.back().tick > upTo) {
+            snapFree.push_back(route.cps.back().snap);
+            route.cps.pop_back();
+        }
+        int keep = std::max(0, route.cps.back().tick - route.posBase);
+        if (static_cast<int>(route.pos.size()) > keep) {
+            route.pos.resize(keep);
+        }
+        route.end = route.cps.back().tick;
+        route.changed = true;
+    }
+
+    std::vector<CCPoint> routeRec;
+    std::vector<RoutePoint> routeNewCps;
+    int routeSimStart = 0;
+
+    void routeCpSink(int rel, PlayerObject* ghost, bool held) {
+        if (route.cps.size() + routeNewCps.size() >= static_cast<size_t>(SNAP_MAX) - 2) {
+            return;
+        }
+        auto* s = takeSnap();
+        if (!s) {
+            return;
+        }
+        copyState(s, ghost);
+        routeNewCps.push_back({ routeSimStart + rel, s, held });
+    }
+
+    int routeCpEvery() {
+        return st(48);
+    }
+
+    // the route's hidden player from saved state `from`, with `flips`, for `length` ticks: how many it lives
+    int routeSim(PlayLayer* layer, PlayerObject* p1, RoutePoint const& from, std::vector<int> const& flips, int length, bool record) {
+        std::vector<int> rel;
+        for (int t : flips) {
+            if (t >= from.tick) {
+                rel.push_back(t - from.tick);
+            }
+        }
+        float savedStep = buf.firstStep;
+        bool orbClick = buf.orbClick, orbAfter = buf.orbAfterFirst, portals = buf.portalPredict;
+        buf.firstStep = 1.f;
+        buf.fullHorizon = true;
+        buf.simFrom = from.snap;
+        buf.simFromHeld = from.held;
+        buf.simOffset = from.tick - tickCount;
+        buf.crossPos = &route.pos;
+        buf.crossBase = route.posBase - tickCount;
+        buf.offscreenFill = true;
+        buf.orbClick = false;
+        buf.orbAfterFirst = false;
+        buf.portalPredict = true;
+        buf.orbTouches.clear();
+        buf.plan = &rel;
+        buf.skipPress = true;
+        routeRec.clear();
+        routeNewCps.clear();
+        routeSimStart = from.tick;
+        if (record) {
+            buf.recordPath = &routeRec;
+            buf.cpEvery = routeCpEvery();
+            buf.cpSink = &routeCpSink;
+        }
+        SimEnd end;
+        int lived = simulate(layer, p1, nullptr, false, 0, true, length, -1, length, &end);
+        buf.recordPath = nullptr;
+        buf.cpEvery = 0;
+        buf.cpSink = nullptr;
+        buf.skipPress = false;
+        buf.plan = nullptr;
+        buf.simFrom = nullptr;
+        buf.crossPos = nullptr;
+        buf.offscreenFill = false;
+        buf.orbClick = orbClick;
+        buf.orbAfterFirst = orbAfter;
+        buf.portalPredict = portals;
+        buf.fullHorizon = false;
+        buf.firstStep = savedStep;
+        ++autoplay.sims;
+        return lived;
+    }
+
+    bool routeHeldAt(int t) {
+        // the button just before tick t's own flips
+        bool held = route.originHeld;
+        for (int f : route.flips) {
+            if (f >= t) {
+                break;
+            }
+            held = !held;
+        }
+        return held;
+    }
+
+    RoutePoint const& routeCpAtOrBefore(int t) {
+        size_t i = route.cps.size();
+        while (i > 1 && route.cps[i - 1].tick > t) {
+            --i;
+        }
+        return route.cps[i - 1];
+    }
+
+    void routeStart(PlayLayer* layer, PlayerObject* p1) {
+        routeReset();
+        auto* s = takeSnap();
+        if (!s) {
+            return;
+        }
+        copyState(s, p1);
+        route.active = true;
+        route.origin = tickCount;
+        route.originHeld = buf.appliedInput;
+        route.cps.push_back({ tickCount, s, buf.appliedInput });
+        route.posBase = tickCount;
+        route.end = tickCount;
+        route.frontier = tickCount;
+        route.changed = true;
+    }
+
+    void routeStuck(PlayLayer* layer, std::string why) {
+        route.sprinting = false;
+        route.stuck = true;
+        route.stuckAt = route.death;
+        route.why = why;
+        autoplay.killer = "route: " + why;
+        if (routeReports < 16) {
+            ++routeReports;
+            say("route stuck {:.1f} s ahead: {}", (route.death - tickCount) / static_cast<double>(st(240)), why);
+        }
+    }
+
+    void routeBeginSprint(int death) {
+        route.sprinting = true;
+        route.death = death;
+        int lastFlip = route.flips.empty() ? -1000000 : route.flips.back();
+        route.lower = std::max({ death - st(240), lastFlip + 1, tickCount + 1, route.cps.front().tick });
+        route.cand = death - 1;
+        route.variant = 0;
+        route.windowHi = -1;
+    }
+
+    // a flip group at t: variant 0 outside wave / ship while let go is a tap, otherwise a flip
+    std::vector<int> routeWith(int t, bool tap) {
+        std::vector<int> f = route.flips;
+        f.push_back(t);
+        if (tap) {
+            f.push_back(t + st(3));
+        }
+        return f;
+    }
+
+    bool routeTapMode(int t) {
+        auto const& cp = routeCpAtOrBefore(t);
+        bool holdMode = cp.snap->m_isDart || cp.snap->m_isShip;
+        return !holdMode && !routeHeldAt(t);
+    }
+
+    void routeAccept(int hi, int lo, int variant) {
+        int t = (hi + lo) / 2;  // the middle of the timings that work: room on both sides
+        bool tap = variant == 0 && routeTapMode(t);
+        route.flips.push_back(t);
+        int last = t;
+        if (tap) {
+            last = t + st(3);
+            route.flips.push_back(last);
+        }
+        route.groups.push_back({ t, last });
+        route.sprinting = false;
+        routeKeepCps(t);
+    }
+
+    void routeTakeBack(PlayLayer* layer) {
+        if (route.groups.empty() || route.takebacks >= 8 || route.groups.back().first <= tickCount + 1) {
+            routeStuck(layer, fmt::format("no input in the second before it gets through ({} taken back)", route.takebacks));
+            return;
+        }
+        auto g = route.groups.back();
+        route.groups.pop_back();
+        route.bannedFirst.insert(g.first);
+        while (!route.flips.empty() && route.flips.back() >= g.first) {
+            route.flips.pop_back();
+        }
+        ++route.takebacks;
+        route.sprinting = false;
+        routeKeepCps(g.first);
+    }
+
+    // one test of the search (latest first, then how far the working window goes)
+    void routeSprintStep(PlayLayer* layer, PlayerObject* p1) {
+        if (route.cand < route.lower) {
+            if (route.windowHi >= 0) {
+                routeAccept(route.windowHi, route.lower, route.windowVariant);
+            }
+            else {
+                routeTakeBack(layer);
+            }
+            return;
+        }
+        int t = route.cand;
+        if (route.bannedFirst.count(t)) {
+            --route.cand;
+            route.variant = 0;
+            return;
+        }
+        bool tapMode = routeTapMode(t);
+        int variants = tapMode ? 2 : 1;
+        int v = route.windowHi >= 0 ? route.windowVariant : route.variant;
+        auto flips = routeWith(t, tapMode && v == 0);
+        auto const& cp = routeCpAtOrBefore(t);
+        int length = route.death - cp.tick + st(48);
+        bool ok = routeSim(layer, p1, cp, flips, length, false) >= length;
+        if (route.windowHi >= 0) {
+            // measuring the window of timings that work
+            if (!ok) {
+                routeAccept(route.windowHi, t + 1, route.windowVariant);
+            }
+            else if (route.windowHi - t >= st(12)) {
+                routeAccept(route.windowHi, t, route.windowVariant);
+            }
+            else {
+                --route.cand;
+            }
+            return;
+        }
+        if (ok) {
+            route.windowHi = t;
+            route.windowVariant = v;
+            --route.cand;
+            return;
+        }
+        if (v + 1 < variants) {
+            route.variant = v + 1;
+        }
+        else {
+            route.variant = 0;
+            --route.cand;
+        }
+    }
+
+    // grow the route at its end; false when there's nothing to do
+    bool routeExtend(PlayLayer* layer, PlayerObject* p1) {
+        if (route.stuck || route.cps.size() >= static_cast<size_t>(SNAP_MAX) - 4) {
+            return false;
+        }
+        auto from = route.cps.back();
+        int length = std::min(st(240), tickCount + st(2400) - from.tick);
+        if (length < st(12)) {
+            return false;
+        }
+        int lived = routeSim(layer, p1, from, route.flips, length, true);
+        for (auto const& c : routeNewCps) {
+            route.cps.push_back(c);
+        }
+        route.pos.resize(std::max(0, from.tick - route.posBase));
+        route.pos.insert(route.pos.end(), routeRec.begin(), routeRec.end());
+        int got = static_cast<int>(routeRec.size());
+        route.changed = true;
+        if (lived >= length && got >= length) {
+            route.end = from.tick + length;
+            if (route.end > route.frontier + st(120)) {
+                route.takebacks = 0;  // well past the last hard spot: a new one gets its own 8
+            }
+            route.frontier = std::max(route.frontier, route.end);
+            return true;
+        }
+        if (lived >= length) {
+            // it stopped at something it can't go through (a portal it doesn't simulate)
+            route.end = from.tick + got;
+            route.death = route.end;
+            routeStuck(layer, "a portal the hidden player can't take");
+            return false;
+        }
+        route.end = from.tick + lived;
+        route.frontier = std::max(route.frontier, route.end);
+        routeBeginSprint(from.tick + lived);
+        return true;
+    }
+
+    void routeDraw(PlayerObject* p1) {
+        auto* d = autoplay.trailNode;
+        if (!d || (!route.changed && tickCount - route.drawnAt < st(24))) {
+            return;
+        }
+        route.changed = false;
+        route.drawnAt = tickCount;
+        d->clear();
+        int from = std::max(0, tickCount - route.posBase);
+        CCPoint prev = p1->getPosition();
+        int step = std::max(1, st(4));
+        for (int k = from; k < static_cast<int>(route.pos.size()); k += step) {
+            auto const& pt = route.pos[k];
+            if (std::abs(pt.x - prev.x) < 150.f && std::abs(pt.y - prev.y) < 150.f) {
+                d->drawSegment(prev, pt, 1.2f, { 0.35f, 1.f, 0.65f, 1.f });
+            }
+            prev = pt;
+        }
+        bool held = route.originHeld;
+        for (int f : route.flips) {
+            held = !held;
+            int k = f - route.posBase - 1;
+            if (f >= tickCount && k >= 0 && k < static_cast<int>(route.pos.size())) {
+                d->drawDot(route.pos[k], held ? 3.f : 2.f, held ? ccColor4F { 0.3f, 0.95f, 1.f, 1.f } : ccColor4F { 1.f, 0.45f, 0.75f, 1.f });
+            }
+        }
+        if (route.stuck) {
+            int k = route.stuckAt - route.posBase - 1;
+            if (k >= 0 && k < static_cast<int>(route.pos.size())) {
+                d->drawDot(route.pos[k], 5.f, { 1.f, 0.2f, 0.2f, 1.f });
+            }
+        }
+    }
+
+    // a tick of autoplay with the route; false = the route has nothing here (the short planner goes on)
+    bool routeTick(PlayLayer* layer, PlayerObject* p1, int at) {
+        if (snapAll.empty() || snapOwner != layer) {
+            return false;
+        }
+        // are you where the route said you'd be?
+        if (route.active && tickCount - 1 >= route.origin) {
+            int k = tickCount - 1 - route.posBase;
+            if (k >= 0 && k < static_cast<int>(route.pos.size())) {
+                auto want = route.pos[k];
+                auto now = p1->getPosition();
+                if (std::abs(want.x - now.x) > 3.f || std::abs(want.y - now.y) > 3.f) {
+                    if (routeDrifts < 12) {
+                        ++routeDrifts;
+                        say("route drift at tick {} ({}): you're at {:.0f},{:.0f}, the route said {:.0f},{:.0f}, planning again from you", at,
+                            MODE_NAMES[modeIndex(p1, nullptr)], now.x, now.y, want.x, want.y);
+                    }
+                    routeReset();
+                }
+            }
+        }
+        // a stuck route you got well past (the short planner found a way): a new one from you
+        if (route.active && route.stuck && tickCount > route.stuckAt + st(60)) {
+            routeReset();
+        }
+        if (!route.active) {
+            routeStart(layer, p1);
+            if (!route.active) {
+                return false;
+            }
+        }
+        // the route's saved states behind you aren't needed any more
+        while (route.cps.size() > 1 && route.cps[1].tick <= tickCount) {
+            snapFree.push_back(route.cps.front().snap);
+            route.cps.erase(route.cps.begin());
+        }
+
+        // plan: a slice of the frame
+        unsigned frame = CCDirector::get()->getTotalFrames();
+        if (frame != autoplay.frame) {
+            autoplay.frame = frame;
+            autoplay.frameMs = 0.0;
+        }
+        double frameMs = std::max(1.0, CCDirector::get()->getDeltaTime() * 1000.0);
+#ifdef GEODE_IS_MOBILE
+        double budget = std::clamp(frameMs * 0.45, 2.0, 5.0);
+#else
+        double budget = std::clamp(frameMs * 0.45, 2.0, 8.0);
+#endif
+        if (route.end - tickCount < st(60)) {
+            budget *= 2.0;  // the planned part is about to run out
+        }
+        auto start = std::chrono::steady_clock::now();
+        double left = budget - autoplay.frameMs;
+        while (left > 0.2) {
+            if (route.sprinting) {
+                routeSprintStep(layer, p1);
+            }
+            else if (!routeExtend(layer, p1)) {
+                break;
+            }
+            double used = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            left = budget - autoplay.frameMs - used;
+        }
+        sweepGhostLayer();
+        autoplay.frameMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+
+        if (tickCount >= route.end) {
+            return false;  // not planned this far (yet): the short planner looks after this tick
+        }
+        // the button as the route has it for this tick
+        bool want = route.originHeld;
+        for (int f : route.flips) {
+            if (f > tickCount) {
+                break;
+            }
+            want = !want;
+        }
+        autoplaySet(layer, want);
+        autoplay.plan.clear();
+        autoplay.verifyAt = -1;
+        autoplay.planSafeUntil = at + (route.end - tickCount);
+        if (!route.stuck) {
+            autoplay.killer = "the route said this was safe";
+        }
+        routeDraw(p1);
+        return true;
+    }
+
+    void buildObjIndex(PlayLayer* layer) {
+        buf.objIndex.clear();
+        if (!layer->m_objects) {
+            return;
+        }
+        uint64_t keep = COLLIDING_TYPES | INTERACT_TYPES | STOP_TYPES | SIZE_TYPES;
+        for (auto* o : CCArrayExt<GameObject*>(layer->m_objects)) {
+            if (!o) {
+                continue;
+            }
+            auto type = static_cast<unsigned>(o->m_objectType);
+            uint64_t bit = type < 64 ? (1ull << type) : 0;
+            if (!(keep & bit) && speedPortalValue(o->m_objectID) <= 0.f) {
+                continue;
+            }
+            buf.objIndex[static_cast<int>(std::floor(o->m_positionX / 64.f))].push_back(o);
+        }
+    }
+
     void autoplayTick(PlayLayer* layer, PlayerObject* p1) {
         if (!autoplay.active || autoplay.layer != layer || p1->m_isDead || !buf.ghost1 || buf.owner != layer) {
             return;
@@ -5351,6 +5941,13 @@ namespace {
             return;
         }
         bool dual = layer->m_gameState.m_isDualMode && layer->m_player2;
+        // v3.0 test 27: the long route (not in dual parts: the short planner does those)
+        if (!dual && routeTick(layer, p1, at)) {
+            return;
+        }
+        if (dual && route.active) {
+            routeReset();
+        }
         auto* p2 = dual ? layer->m_player2 : nullptr;
         bool holdMode = p1->m_isDart || p1->m_isShip || (p2 && (p2->m_isDart || p2->m_isShip));
         // v3.0 test 17: the plan reaches 1.5 s ahead (300 ticks flying, 360 on the ground) and is
@@ -7430,6 +8027,7 @@ class $modify(BufPlayLayer, PlayLayer) {
         buf.heatNode = nullptr;
         memoryKey.clear();
         stopAutoplay("");
+        dropSnaps(true);
         dropGhosts();
         PlayLayer::onQuit();
     }
@@ -7656,6 +8254,36 @@ class $modify(BufPlayerObject, PlayerObject) {
         (void)self.setHookPriority("PlayerObject::update", HOOK_PRIORITY);
         (void)self.setHookPriority("PlayerObject::incrementJumps", HOOK_PRIORITY);
         (void)self.setHookPriority("PlayerObject::ringJump", HOOK_PRIORITY);
+    }
+
+    // v3.0 test 27: a hidden player past the screen: GD has no objects for it out there, so the
+    // level index adds the ones near it, inside GD's collision step (before it settles landing),
+    // leaving out the ones GD did give it this step
+    void postCollision(float dt, bool betweenSteps) {
+        if (buf.simulating && buf.inCheck && buf.offscreenFill && !buf.objIndex.empty() && isGhost(this)) {
+            if (auto* layer = GameManager::get()->m_playLayer) {
+                static gd::vector<GameObject*> extra;
+                extra.clear();
+                auto pos = getPosition();
+                int b = static_cast<int>(std::floor(pos.x / 64.f));
+                for (int k = b - 3; k <= b + 3; ++k) {
+                    auto it = buf.objIndex.find(k);
+                    if (it == buf.objIndex.end()) {
+                        continue;
+                    }
+                    for (auto* o : it->second) {
+                        if (std::abs(o->m_positionX - pos.x) < 200.f && std::abs(o->m_positionY - pos.y) < 200.f &&
+                            !buf.seenThisCheck.contains(o)) {
+                            extra.push_back(o);
+                        }
+                    }
+                }
+                if (!extra.empty()) {
+                    layer->collisionCheckObjects(this, &extra, static_cast<int>(extra.size()), dt);
+                }
+            }
+        }
+        PlayerObject::postCollision(dt, betweenSteps);
     }
 
     // Runs 240x/sec per player. Ghost steps (during a simulation) skip straight to
@@ -8289,10 +8917,14 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
         bool haveRect = false;
         CCRect ghostRect;
         auto& list = *objects;
+        bool noteSeen = buf.offscreenFill;
         for (int i = 0; i < objectCount; ++i) {
             auto* object = list[i];
             if (!object) {
                 continue;
+            }
+            if (noteSeen) {
+                buf.seenThisCheck.insert(object);
             }
             auto type = static_cast<unsigned>(object->m_objectType);
             uint64_t bit = type < 64 ? (1ull << type) : 0;
