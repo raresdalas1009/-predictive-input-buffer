@@ -5536,6 +5536,7 @@ namespace {
         int beforeLimit = INT_MAX;  // test 32: after a take-back, the next search looks before it
         bool afterTakeback = false;  // test 37: the next working timing is taken as it is (latest first)
         std::vector<int> orbFirst;  // test 35: clicks in the middle of the orbs passed before the death, tried first
+        std::vector<std::pair<int, int>> orbRanges;  // test 39: when the route touches orbs (first, last tick)
         std::string why;
     };
     Route route;
@@ -5801,6 +5802,19 @@ namespace {
         route.orbT = -1;
         route.orbEnd = 0;
         route.orbFirst.clear();
+        route.orbRanges.clear();
+    }
+
+    // v3.0 test 39: a click while touching an orb only has to get a little past the death: in an
+    // orb chain each click only lives until the next orb (which gets its own search), so the 0.5 s
+    // rule never let one through (60% of Stereo Madness)
+    int routeNeeded(int t) {
+        for (auto const& [a, b] : route.orbRanges) {
+            if (t >= a - st(2) && t <= b) {
+                return st(30);
+            }
+        }
+        return st(120);
     }
 
     int routeCoarseStep(int t) {
@@ -5893,7 +5907,7 @@ namespace {
                 bool tapMode = routeTapMode(t);
                 auto const& cp = routeCpAtOrBefore(t);
                 int cpTick = cp.tick;
-                int length = route.death - cpTick + st(120);
+                int length = route.death - cpTick + routeNeeded(t);
                 int lived = routeSim(layer, p1, cp, routeWith(t, tapMode), length, false);
                 if (lived >= length) {
                     routeAccept(layer, p1, t, t, 0);  // the orb's middle gets through: taken as it is
@@ -5940,7 +5954,7 @@ namespace {
         auto flips = routeWith(t, tapMode && v == 0);
         auto const& cp = routeCpAtOrBefore(t);
         int cpTick = cp.tick;
-        int length = route.death - cpTick + st(120);
+        int length = route.death - cpTick + routeNeeded(t);
         int lived = routeSim(layer, p1, cp, flips, length, false);
         bool ok = lived >= length;
         if (!ok) {
@@ -6064,6 +6078,7 @@ namespace {
             orbs.push_back({ from.tick + buf.orbTouches[i].second, from.tick + buf.orbTouchLast[i] });
         }
         routeBeginSprint(from.tick + lived);
+        route.orbRanges = orbs;
         // v3.0 test 35: orbs it went through on the way: a click in the middle of each is tried
         // first, the nearest to the death first (orb clicks came out too early / late / missing)
         for (auto it = orbs.rbegin(); it != orbs.rend(); ++it) {
