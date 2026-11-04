@@ -4597,6 +4597,8 @@ namespace {
         PlayLayer* layer = nullptr;
         int safeUntil = -1;   // tick until which the current button state is known to be fine
         int inputs = 0;
+        int userUntil = -1;   // Take Over: your last click; the bot waits until this tick
+        bool takeOver = false;
         CCLabelBMFont* tag = nullptr;
     };
     Autoplay autoplay;
@@ -4648,7 +4650,10 @@ namespace {
         autoplay.layer = layer;
         resetPending();
         auto win = CCDirector::get()->getWinSize();
-        autoplay.tag = CCLabelBMFont::create("AUTOPLAY", "bigFont.fnt");
+        autoplay.takeOver = Mod::get()->getSavedValue<bool>("autoplay-takeover", false);
+        // the label stays the whole time autoplay is on (also while you play with Take Over),
+        // so a recording always shows the run wasn't played by hand
+        autoplay.tag = CCLabelBMFont::create(autoplay.takeOver ? "AUTOPLAY - TAKE OVER" : "AUTOPLAY", "bigFont.fnt");
         autoplay.tag->setScale(0.45f);
         autoplay.tag->setColor({ 255, 215, 90 });
         autoplay.tag->setOpacity(220);
@@ -4661,6 +4666,10 @@ namespace {
 
     void autoplayTick(PlayLayer* layer, PlayerObject* p1) {
         if (!autoplay.active || autoplay.layer != layer || p1->m_isDead || !buf.ghost1 || buf.owner != layer) {
+            return;
+        }
+        // Take Over: your clicks go first; the bot plays on once you've stopped for a moment
+        if (autoplay.takeOver && tickCount < autoplay.userUntil) {
             return;
         }
         resetPending();
@@ -5686,6 +5695,18 @@ private:
             0.36f, m_muted, { rx + colW / 2.f, top - 102.f })->limitLabelWidth(colW - 16.f, 0.36f, 0.15f);
         label(m_page, "Not for platformer or 2-player levels.", 0.34f, m_muted, { rx + colW / 2.f, top - 114.f })
             ->limitLabelWidth(colW - 16.f, 0.34f, 0.15f);
+        {
+            float y = top - 136.f;
+            auto* d0 = CCDrawNode::create();
+            roundRect(d0, { rx + 5.f, y - 11.f, colW - 10.f, 22.f }, 6.f, m_light ? col({ 255, 255, 255 }, 0.6f) : col({ 255, 255, 255 }, 0.035f), 0.4f,
+                col(m_t.main, 0.25f));
+            m_page->addChild(d0, 1);
+            bool on = Mod::get()->getSavedValue<bool>("autoplay-takeover", false);
+            label(m_page, "Take Over", 0.5f, on ? m_text : m_muted, { rx + 12.f, y + 4.f }, { 0.f, 0.5f });
+            label(m_page, "Your clicks first, it plays on when you stop", 0.3f, m_muted, { rx + 12.f, y - 5.5f }, { 0.f, 0.5f })
+                ->limitLabelWidth(colW - 50.f, 0.3f, 0.15f);
+            switchItem({ rx + colW - 23.f, y }, on, menu_selector(BufferMenu::onTakeOver), 0, nullptr);
+        }
         float bw = (colW - 22.f) / 2.f;
         button(m_pageMenu, "Forget Level", menu_selector(BufferMenu::onForget), { rx + 8.f + bw / 2.f, FOOT + 20.f }, bw);
         button(m_pageMenu, "Show On Screen", menu_selector(BufferMenu::onConsole), { rx + 14.f + bw * 1.5f, FOOT + 20.f }, bw);
@@ -6074,6 +6095,19 @@ private:
         buf.panelOpen = !buf.panelOpen;
         refreshPanel();
         say("console {}", buf.panelOpen ? "shown" : "hidden");
+        rebuildPage();
+    }
+
+    void onTakeOver(CCObject*) {
+        bool on = !Mod::get()->getSavedValue<bool>("autoplay-takeover", false);
+        Mod::get()->setSavedValue("autoplay-takeover", on);
+        if (autoplay.active) {
+            autoplay.takeOver = on;
+            if (autoplay.tag) {
+                autoplay.tag->setString(on ? "AUTOPLAY - TAKE OVER" : "AUTOPLAY");
+            }
+        }
+        say("autoplay take over {}", on ? "on (nothing is saved, the label stays on screen)" : "off");
         rebuildPage();
     }
 
@@ -7422,9 +7456,14 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     }
 
     void handleButton(bool down, int button, bool isPlayer1) {
-        // v3.0: while autoplay plays, your own clicks don't reach the game
+        // v3.0: while autoplay plays, your own clicks don't reach the game (Take Over: they do,
+        // and the bot steps back for a moment after each one)
         if (autoplay.active && !buf.simulating && !buf.injecting) {
-            return;
+            if (!autoplay.takeOver) {
+                return;
+            }
+            autoplay.userUntil = tickCount + st(down ? 90 : 60);
+            autoplay.safeUntil = -1;
         }
         if (!buf.simulating && button == 1 && !buf.injecting) {
             auto* p1 = this->m_player1;
