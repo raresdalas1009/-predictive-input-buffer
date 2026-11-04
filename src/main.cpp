@@ -25,7 +25,6 @@
 #include <Geode/modify/MenuLayer.hpp>
 #include <Geode/ui/TextInput.hpp>
 #include <Geode/modify/PlayLayer.hpp>
-#include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/EndLevelLayer.hpp>
 #include <Geode/ui/GeodeUI.hpp>
 #include <Geode/ui/Popup.hpp>
@@ -5674,40 +5673,6 @@ class $modify(BufEndLevelLayer, EndLevelLayer) {
     }
 };
 
-// v2.94: the pause menu has a button for the menu again (v2.92 had dropped it, so on phones,
-// with no menu key, there was no way to open it inside a level)
-// v2.99.4: the pause menu button is added by one function, from two places. On iOS the game
-// builds the pause menu with its setup inlined, so the customSetup hook alone never ran there;
-// PlayLayer::pauseGame (below) adds it after the pause menu is shown. Never added twice.
-static void addPauseButton(CCNode* pause) {
-    if (!pause || pause->getChildByID("click-before-frames-menu"_spr)) {
-        return;
-    }
-    auto* top = CCSprite::create("heart.png"_spr);
-    if (!top) {
-        return;
-    }
-    top->setScale(0.55f);
-    auto* sprite = CircleButtonSprite::create(top, CircleBaseColor::DarkPurple, CircleBaseSize::Medium);
-    auto* button = CCMenuItemExt::createSpriteExtra(sprite, [](CCMenuItemSpriteExtra*) {
-        BufferMenu::open();
-    });
-    button->setID("click-before-frames-button"_spr);
-    auto* menu = CCMenu::create();
-    menu->addChild(button);
-    auto win = CCDirector::get()->getWinSize();
-    menu->setPosition({ win.width - 40.f, 40.f });
-    menu->setID("click-before-frames-menu"_spr);
-    pause->addChild(menu, 10);
-}
-
-class $modify(BufPauseLayer, PauseLayer) {
-    void customSetup() {
-        PauseLayer::customSetup();
-        addPauseButton(this);
-    }
-};
-
 // v2.99.1: startup checkpoints in the Geode log (each written once), to find where a phone
 // that crashes on start stops
 #define CBF_STEP(name)                                  \
@@ -6028,18 +5993,6 @@ class $modify(BufPlayLayer, PlayLayer) {
         // pressed for you as the attempt started (the cube jumped by itself until you clicked).
         // Now the mod only presses when you press.
         syncHeld(this);
-    }
-
-    // v2.99.4: see addPauseButton (iOS never ran the PauseLayer::customSetup hook)
-    void pauseGame(bool unfocused) {
-        PlayLayer::pauseGame(unfocused);
-        if (auto* scene = CCDirector::get()->getRunningScene()) {
-            for (auto* child : CCArrayExt<CCNode*>(scene->getChildren())) {
-                if (typeinfo_cast<PauseLayer*>(child)) {
-                    addPauseButton(child);
-                }
-            }
-        }
     }
 
     void togglePracticeMode(bool practiceMode) {
