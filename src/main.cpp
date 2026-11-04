@@ -326,6 +326,9 @@ namespace {
         std::unordered_map<int, std::vector<GameObject*>> objIndex;
         std::unordered_set<GameObject*> seenThisCheck;
         bool inCheck = false;
+        bool postCollisionSeen = false;  // test 33: GD called postCollision inside this collision check
+        long long offscreenAdded = 0;    // objects the index added (shown at a death)
+        long long offscreenFallback = 0; // ...of those, added after the check (postCollision never came)
         int pathHoldUntil = 0;       // v2.65: live path waits while a click's path is on screen
 
         std::unordered_set<GameObject*> simUsed;
@@ -2532,6 +2535,29 @@ namespace {
         ghost->updateRotation(dt);
     }
 
+    // v3.0 test 27: the level index's objects near a hidden player that GD didn't give it this step
+    void injectOffscreen(PlayLayer* layer, PlayerObject* ghost, float dt) {
+        static gd::vector<GameObject*> extra;
+        extra.clear();
+        auto pos = ghost->getPosition();
+        int b = static_cast<int>(std::floor(pos.x / 64.f));
+        for (int k = b - 3; k <= b + 3; ++k) {
+            auto it = buf.objIndex.find(k);
+            if (it == buf.objIndex.end()) {
+                continue;
+            }
+            for (auto* o : it->second) {
+                if (std::abs(o->m_positionX - pos.x) < 200.f && std::abs(o->m_positionY - pos.y) < 200.f && !buf.seenThisCheck.contains(o)) {
+                    extra.push_back(o);
+                }
+            }
+        }
+        if (!extra.empty()) {
+            buf.offscreenAdded += static_cast<long long>(extra.size());
+            layer->collisionCheckObjects(ghost, &extra, static_cast<int>(extra.size()), dt);
+        }
+    }
+
     void checkGhost(PlayLayer* layer, PlayerObject* ghost, float dt) {
         ghost->m_collisionLogTop->removeAllObjects();
         ghost->m_collisionLogBottom->removeAllObjects();
@@ -2539,8 +2565,15 @@ namespace {
         ghost->m_collisionLogRight->removeAllObjects();
         buf.seenThisCheck.clear();
         buf.inCheck = true;
+        buf.postCollisionSeen = false;
         layer->checkCollisions(ghost, dt, false);
         buf.inCheck = false;
+        if (buf.offscreenFill && !buf.postCollisionSeen && !buf.objIndex.empty() && !buf.ghostDied) {
+            // test 33: GD didn't call postCollision in this check: the far objects go in after it
+            auto before = buf.offscreenAdded;
+            injectOffscreen(layer, ghost, dt);
+            buf.offscreenFallback += buf.offscreenAdded - before;
+        }
         if (buf.simulating && !buf.ghostDied && !buf.autoDangers.empty()) {
             auto r = ghost->getObjectRect();
             for (auto const& d : buf.autoDangers) {
@@ -5495,6 +5528,7 @@ namespace {
         bool fine = false;  // test 28: the search goes a few ticks at a time first, then tick by tick
         int candStart = 0;
         int lastRecheck = -1000;
+        int recheckFails = 0;  // test 33: re-checks in a row that died sooner than the route
         int beforeLimit = INT_MAX;  // test 32: after a take-back, the next search looks before it
         std::string why;
     };
@@ -5510,6 +5544,8 @@ namespace {
         routeRechecks = 0;
         routeSimMs = 0.0;
         routeSimCount = 0;
+        buf.offscreenAdded = 0;
+        buf.offscreenFallback = 0;
     }
     constexpr int SNAP_MAX = 48;
     std::vector<PlayerObject*> snapFree;
@@ -5977,7 +6013,10 @@ namespace {
             RoutePoint here { tickCount, nullptr, buf.appliedInput };
             int length = std::min(route.end, tickCount + st(300)) - tickCount;
             int lived = routeSim(layer, p1, here, route.flips, length, false);
-            if (lived < length) {
+            // test 33: one re-check isn't enough unless the death is close (guesses about moving
+            // objects wobble, and every replan changed the path you see)
+            route.recheckFails = lived < length ? route.recheckFails + 1 : 0;
+            if (lived < length && (lived < st(90) || route.recheckFails >= 2)) {
                 if (routeRechecks < 12) {
                     ++routeRechecks;
                     say("route re-check at tick {}: it now dies {} ticks ahead, not past {} (something moved): planned again from you", at,
@@ -7945,6 +7984,8 @@ class $modify(BufPlayLayer, PlayLayer) {
                                             route.cand - route.origin, route.lower - route.origin, route.fine ? ", tick by tick" : "")
                                       : "",
                     routeSimCount, routeSimCount ? routeSimMs / routeSimCount : 0.0);
+                say("  off-screen objects the route's ghost was given: {} ({} of them after the check)", buf.offscreenAdded,
+                    buf.offscreenFallback);
             }
             // v3.0 test 26: the ghost didn't see what killed you: where you died is avoided from now on
             if (expected && !replaying) {
@@ -8442,26 +8483,11 @@ class $modify(BufPlayerObject, PlayerObject) {
     // level index adds the ones near it, inside GD's collision step (before it settles landing),
     // leaving out the ones GD did give it this step
     void postCollision(float dt, bool betweenSteps) {
-        if (buf.simulating && buf.inCheck && buf.offscreenFill && !buf.objIndex.empty() && isGhost(this)) {
-            if (auto* layer = GameManager::get()->m_playLayer) {
-                static gd::vector<GameObject*> extra;
-                extra.clear();
-                auto pos = getPosition();
-                int b = static_cast<int>(std::floor(pos.x / 64.f));
-                for (int k = b - 3; k <= b + 3; ++k) {
-                    auto it = buf.objIndex.find(k);
-                    if (it == buf.objIndex.end()) {
-                        continue;
-                    }
-                    for (auto* o : it->second) {
-                        if (std::abs(o->m_positionX - pos.x) < 200.f && std::abs(o->m_positionY - pos.y) < 200.f &&
-                            !buf.seenThisCheck.contains(o)) {
-                            extra.push_back(o);
-                        }
-                    }
-                }
-                if (!extra.empty()) {
-                    layer->collisionCheckObjects(this, &extra, static_cast<int>(extra.size()), dt);
+        if (buf.simulating && buf.inCheck && isGhost(this)) {
+            buf.postCollisionSeen = true;
+            if (buf.offscreenFill && !buf.objIndex.empty()) {
+                if (auto* layer = GameManager::get()->m_playLayer) {
+                    injectOffscreen(layer, this, dt);
                 }
             }
         }
