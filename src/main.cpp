@@ -4642,6 +4642,7 @@ namespace {
         // across attempts), and searches in a row that couldn't make the plan last longer
         std::set<int> banned;
         int stuck = 0;
+        std::string killer;  // v3.0 test 18: what kills the ghost in the current plan
         CCLabelBMFont* tag = nullptr;
     };
     Autoplay autoplay;
@@ -5062,6 +5063,23 @@ namespace {
                         break;
                     }
                 }
+            }
+        }
+        // v3.0 test 18: when the plan still crashes soon, what kills the ghost (logged at a death)
+        if (survived < c.horizon && survived < st(90)) {
+            buf.captureKiller = true;
+            buf.killerSeen = false;
+            buf.baseTouchedDown = false;
+            buf.baseEscape = -1;
+            simulatePlan(c, rel);
+            buf.captureKiller = false;
+            if (buf.killerSeen) {
+                autoplay.killer = fmt::format("ghost hit object {} (type {}{}{}) at x {:.0f} y {:.0f} when at x {:.0f} y {:.0f}", buf.killerId,
+                    buf.killerType, buf.killerNoTouch ? ", no-touch" : "", buf.killerDisabled ? ", disabled" : "", buf.killerRect.getMidX(),
+                    buf.killerRect.getMidY(), buf.ghostDeathRect.getMidX(), buf.ghostDeathRect.getMidY());
+            }
+            else {
+                autoplay.killer = "ghost didn't hit an object (fell out of the level, or stopped)";
             }
         }
         buf.fullHorizon = false;
@@ -6708,6 +6726,10 @@ class $modify(BufPlayLayer, PlayLayer) {
                           : expected ? fmt::format("the ghost expected to survive {} more ticks (prediction was wrong here)",
                                            autoplay.planSafeUntil - at)
                                      : "no safe route was found in time (search)");
+            // v3.0 test 18: what killed you, next to what the ghost thought would
+            say("  you hit object {} (type {}) at x {:.0f} y {:.0f} when at x {:.0f} y {:.0f} | {}", object ? object->m_objectID : 0,
+                object ? static_cast<int>(object->m_objectType) : -1, object ? object->getPositionX() : 0.f, object ? object->getPositionY() : 0.f,
+                player->getPositionX(), player->getPositionY(), autoplay.killer.empty() ? "no ghost report" : autoplay.killer);
             autoplay.diedThisAttempt = true;
         }
         if (buf.simulating && isGhost(player)) {
