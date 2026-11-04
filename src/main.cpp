@@ -4794,7 +4794,7 @@ namespace {
         // v3.0 test 11: how long before the crash to flip. A cube jump lasts ~100 ticks, so
         // clearing a spike often means pressing 30-60 ticks before reaching it (test 10 only tried
         // up to 30, so it never found that jump). Flying modes need finer, closer steps.
-        static constexpr int GROUND_BACKS[] = { 2, 5, 9, 14, 20, 27, 35, 45, 56, 70 };
+        static constexpr int GROUND_BACKS[] = { 2, 5, 9, 14, 20, 27, 35, 45, 56, 70, 85, 100 };
         static constexpr int FLY_BACKS[] = { 1, 2, 4, 6, 9, 13, 18, 24 };
         std::vector<int> backs;
         if (c.holdMode) {
@@ -4816,18 +4816,25 @@ namespace {
             if (t < 0 || t > survived) {
                 continue;
             }
-            // v3.0 test 9: outside wave / ship a jump is a tap (press, let go 3 ticks later), one
-            // step of the search instead of two
+            // v3.0 test 16: outside wave / ship a press is tried three ways: a short tap, a longer
+            // tap, and holding (let go later by the next step). Test 9-15 only tried a 3-tick tap,
+            // which does nothing when pressed just before landing (the game jumps on landing only
+            // while you still hold) and can't chain a jump right after landing.
             bool heldAt = c.held0 != (rel.size() % 2 == 1);
-            size_t before = rel.size();
-            rel.push_back(t);
-            if (!c.holdMode && !heldAt) {
-                rel.push_back(t + st(3));
-            }
-            int r = planSearch(c, rel, depth - 1, budget, best, bestLen);
-            rel.resize(before);
-            if (r >= c.horizon || autoplay.sims >= budget) {
-                return r;
+            int variants[] = { st(3), st(10), -1 };
+            int nVariants = (!c.holdMode && !heldAt) ? 3 : 1;
+            int r = -1;
+            for (int v = 0; v < nVariants; ++v) {
+                size_t before = rel.size();
+                rel.push_back(t);
+                if (nVariants > 1 && variants[v] > 0) {
+                    rel.push_back(t + variants[v]);
+                }
+                r = planSearch(c, rel, depth - 1, budget, best, bestLen);
+                rel.resize(before);
+                if (r >= c.horizon || autoplay.sims >= budget) {
+                    return r;
+                }
             }
             if (t == last + 1) {
                 break;
@@ -4993,7 +5000,7 @@ namespace {
         if (survived < c.horizon) {
             std::vector<int> best = rel;
             int bestLen = survived;
-            int budget = 60;
+            int budget = 160;  // tries per search (each ~0.1-0.3 ms; the time budget usually stops it first)
             // 1. cheapest: keep the plan and add flips where it would crash
             {
                 std::vector<int> ext = rel;
