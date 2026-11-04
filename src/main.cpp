@@ -4783,10 +4783,22 @@ namespace {
                 return r;
             }
         }
-        for (int back : { 1, 3, 6, 10, 15, 22, 30 }) {
+        // v3.0 test 11: how long before the crash to flip. A cube jump lasts ~100 ticks, so
+        // clearing a spike often means pressing 30-60 ticks before reaching it (test 10 only tried
+        // up to 30, so it never found that jump). Flying modes need finer, closer steps.
+        static constexpr int GROUND_BACKS[] = { 2, 5, 9, 14, 20, 27, 35, 45, 56, 70 };
+        static constexpr int FLY_BACKS[] = { 1, 2, 4, 6, 9, 13, 18, 24 };
+        std::vector<int> backs;
+        if (c.holdMode) {
+            backs.assign(std::begin(FLY_BACKS), std::end(FLY_BACKS));
+        }
+        else {
+            backs.assign(std::begin(GROUND_BACKS), std::end(GROUND_BACKS));
+        }
+        for (int back : backs) {
             int t = survived - st(back);
             if (t <= last) {
-                if (back == 1) {
+                if (back == backs.front()) {
                     t = last + 1;  // at least try the very next tick
                 }
                 else {
@@ -4896,7 +4908,10 @@ namespace {
         bool dual = layer->m_gameState.m_isDualMode && layer->m_player2;
         auto* p2 = dual ? layer->m_player2 : nullptr;
         bool holdMode = p1->m_isDart || p1->m_isShip || (p2 && (p2->m_isDart || p2->m_isShip));
-        PlanCtx c { layer, p1, p2, dual, st(120), buf.appliedInput, holdMode };
+        // v3.0 test 11: a shorter look-ahead (90 ground, 60 flying): with the learning backing up at
+        // dead ends it doesn't need to see as far, and each try costs less
+        bool flyer = isFlying(p1) || (p2 && isFlying(p2));
+        PlanCtx c { layer, p1, p2, dual, st(flyer ? 60 : 90), buf.appliedInput, holdMode };
 
         // follow the plan: flips due now
         while (!autoplay.plan.empty() && autoplay.plan.front() <= tickCount) {
