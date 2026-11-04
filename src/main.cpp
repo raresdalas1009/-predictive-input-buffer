@@ -4643,6 +4643,19 @@ namespace {
         std::set<int> banned;
         int stuck = 0;
         std::string killer;  // v3.0 test 18: what kills the ghost in the current plan
+        // v3.0 test 20: plans still to try (absolute flip ticks, longest-lasting parent first),
+        // kept from frame to frame so the search goes on where it stopped instead of trying the
+        // same first few plans every frame
+        struct QItem {
+            int score;
+            std::vector<int> plan;
+            bool operator<(QItem const& o) const {
+                return score != o.score ? score < o.score : plan.size() > o.plan.size();
+            }
+        };
+        std::vector<QItem> queue;
+        std::set<std::vector<int>> seen;
+        int queueBase = -1;  // tick the queue was built at (cleared when a flip happens)
         CCLabelBMFont* tag = nullptr;
     };
     Autoplay autoplay;
@@ -4863,6 +4876,87 @@ namespace {
         return survived;
     }
 
+    // v3.0 test 20: the plans one step on from `plan` (absolute flip ticks), which lasted `survived`
+    // ticks from now and touched `orbs`: a tap on an orb it touched, then a press or release near
+    // the crash and further and further back (a short tap, a long tap or a hold outside wave / ship)
+    void enqueueChildren(PlanCtx const& c, std::vector<int> const& plan, int survived, std::vector<std::pair<void*, int>> const& orbs) {
+        int lastRel = plan.empty() ? -1 : plan.back() - tickCount;
+        auto push = [&](std::vector<int> child) {
+            if (autoplay.seen.insert(child).second) {
+                autoplay.queue.push_back({ survived, std::move(child) });
+                std::push_heap(autoplay.queue.begin(), autoplay.queue.end());
+            }
+        };
+        auto banned = [&](int rel) {
+            return c.banned && c.banned->count(c.at + rel);
+        };
+        bool heldAt = c.held0 != (plan.size() % 2 == 1);
+        for (auto const& [r, t] : orbs) {
+            if (t > lastRel && t <= survived && !banned(t)) {
+                std::vector<int> child = plan;
+                if (heldAt) {
+                    child.push_back(tickCount + t);
+                    child.push_back(tickCount + t + 1);
+                }
+                else {
+                    child.push_back(tickCount + t);
+                }
+                if (!c.holdMode) {
+                    child.push_back(child.back() + st(4));
+                }
+                push(std::move(child));
+            }
+        }
+        static constexpr int GROUND_BACKS[] = { 2, 5, 9, 14, 20, 27, 35, 45, 56, 70, 85, 100 };
+        static constexpr int FLY_BACKS[] = { 1, 2, 4, 6, 9, 13, 18, 24 };
+        std::vector<int> backs;
+        if (c.holdMode) {
+            backs.assign(std::begin(FLY_BACKS), std::end(FLY_BACKS));
+        }
+        else {
+            backs.assign(std::begin(GROUND_BACKS), std::end(GROUND_BACKS));
+        }
+        int stepBack = c.holdMode ? 6 : 12;
+        for (int b = backs.back() + stepBack; st(b) <= survived - lastRel; b += stepBack) {
+            backs.push_back(b);
+        }
+        for (int back : backs) {
+            int t = std::max(survived - st(back), lastRel + 1);
+            if (t < 0 || t > survived || banned(t)) {
+                continue;
+            }
+            if (!c.holdMode && !heldAt) {
+                for (int len : { st(3), st(10), -1 }) {
+                    std::vector<int> child = plan;
+                    child.push_back(tickCount + t);
+                    if (len > 0) {
+                        child.push_back(tickCount + t + len);
+                    }
+                    push(std::move(child));
+                }
+            }
+            else {
+                std::vector<int> child = plan;
+                child.push_back(tickCount + t);
+                push(std::move(child));
+            }
+            if (t == lastRel + 1) {
+                break;
+            }
+        }
+        if (autoplay.queue.size() > 4000) {
+            std::sort_heap(autoplay.queue.begin(), autoplay.queue.end());
+            autoplay.queue.erase(autoplay.queue.begin(), autoplay.queue.end() - 2000);
+            std::make_heap(autoplay.queue.begin(), autoplay.queue.end());
+        }
+    }
+
+    void clearQueue() {
+        autoplay.queue.clear();
+        autoplay.seen.clear();
+        autoplay.queueBase = -1;
+    }
+
     // v3.0 test 12: autoplay presses on the player itself, like the ghost does, instead of through
     // the game's button handling. Click Between Frames moves clicks that go through there to a
     // sub-frame moment taken from the real clock, so the same plan landed a little differently
@@ -4913,6 +5007,7 @@ namespace {
         autoplay.userTouched = false;
         autoplay.diedThisAttempt = false;
         autoplay.reports = 0;
+        clearQueue();
     }
 
     // a death: keep this attempt's inputs up to a bit before it (normal mode, bot-only attempts)
@@ -4984,10 +5079,11 @@ namespace {
         c.at = at;
         c.banned = layer->m_isPracticeMode ? nullptr : &autoplay.banned;
 
-        // follow the plan: flips due now
+        // follow the plan: flips due now (the queued plans were built before it, so they go)
         while (!autoplay.plan.empty() && autoplay.plan.front() <= tickCount) {
             autoplay.plan.erase(autoplay.plan.begin());
             autoplayFlip(layer);
+            clearQueue();
         }
         c.held0 = buf.appliedInput;
         if (tickCount < autoplay.verifyAt) {
@@ -5039,20 +5135,51 @@ namespace {
             autoplay.stuck = 0;
         }
         else {
-            std::vector<int> best = rel;
-            int bestLen = survived;
-            std::vector<int> ext = rel;
-            planSearch(c, ext, 3, 400, best, bestLen);
+            // v3.0 test 20: work through the queue of plans, carrying on from last frame
+            std::vector<int> curAbs;
+            for (int t : rel) {
+                curAbs.push_back(tickCount + t);
+            }
+            if (autoplay.queue.empty()) {
+                autoplay.seen.clear();
+                autoplay.seen.insert(curAbs);
+                simulatePlan(c, rel);  // for the orbs it touches
+                auto orbs = buf.orbTouches;
+                enqueueChildren(c, curAbs, survived, orbs);
+                autoplay.queueBase = tickCount;
+            }
+            int startLen = survived;
+            while (!autoplay.queue.empty() && !planOutOfTime() && survived < c.horizon) {
+                std::pop_heap(autoplay.queue.begin(), autoplay.queue.end());
+                auto item = std::move(autoplay.queue.back());
+                autoplay.queue.pop_back();
+                std::vector<int> r;
+                bool stale = false;
+                for (int t : item.plan) {
+                    stale = stale || t < tickCount;
+                    r.push_back(t - tickCount);
+                }
+                if (stale) {
+                    continue;
+                }
+                int len = simulatePlan(c, r);
+                auto orbs = buf.orbTouches;
+                if (len > survived) {
+                    // only a plan that really lasts longer replaces the current one (v3.0 test 16
+                    // also switched to equally bad plans: the wave turned for no reason)
+                    rel = r;
+                    survived = len;
+                    changed = true;
+                }
+                if (len < c.horizon) {
+                    enqueueChildren(c, item.plan, len, orbs);
+                }
+            }
             bool timedOut = planOutOfTime();
-            if (bestLen > survived) {
-                // only a plan that really lasts longer replaces the current one (v3.0 test 16 also
-                // switched to equally bad plans: the wave turned for no reason)
-                rel = best;
-                survived = bestLen;
-                changed = true;
+            if (survived > startLen) {
                 autoplay.stuck = 0;
             }
-            else if (!timedOut || ++autoplay.stuck >= 3) {
+            else if (autoplay.queue.empty() && (!timedOut || ++autoplay.stuck >= 3)) {
                 // nothing better from here: take back the last flip that isn't about to happen, mark
                 // it as failed there, and look for another way from the shorter plan
                 autoplay.stuck = 0;
@@ -5069,6 +5196,7 @@ namespace {
                         rel.resize(i);
                         changed = true;
                         survived = simulatePlan(c, rel);
+                        clearQueue();
                         break;
                     }
                 }
