@@ -4727,9 +4727,10 @@ namespace {
     // autoplay never made)
     int simulatePlan(PlanCtx const& c, std::vector<int> const& rel) {
         SimEnd end;
-        bool orbClick = buf.orbClick, orbAfter = buf.orbAfterFirst;
+        bool orbClick = buf.orbClick, orbAfter = buf.orbAfterFirst, portals = buf.portalPredict;
         buf.orbClick = false;
         buf.orbAfterFirst = false;
+        buf.portalPredict = true;  // v3.0 test 14: stopping at a portal looked "safe" to the planner
         buf.orbTouches.clear();
         buf.plan = &rel;
         buf.skipPress = true;
@@ -4738,6 +4739,7 @@ namespace {
         buf.plan = nullptr;
         buf.orbClick = orbClick;
         buf.orbAfterFirst = orbAfter;
+        buf.portalPredict = portals;
         ++autoplay.sims;
         return survived;
     }
@@ -7610,14 +7612,18 @@ static double tpsCarry = 0.0;
 class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     void update(float dt) {
         int tps = static_cast<int>(Mod::get()->getSettingValue<int64_t>("tps"));
-        if (tps <= 240 || tpsDriving || !typeinfo_cast<PlayLayer*>(this)) {
+        // v3.0 test 14: while autoplay plays, physics steps are exactly 1/240 s even at the normal
+        // 240 TPS. The game's own steps are frame time / step count, so the same inputs moved
+        // you a little differently each attempt (replays went differently, the ghost guessed wrong)
+        bool fixedStep = autoplay.active && autoplay.layer == this;
+        if ((tps <= 240 && !fixedStep) || tpsDriving || !typeinfo_cast<PlayLayer*>(this)) {
             GJBaseGameLayer::update(dt);
             return;
         }
-        double step = 1.0 / tps;
+        double step = 1.0 / std::max(tps, 240);
         tpsCarry += dt;
         int steps = static_cast<int>(tpsCarry / step);
-        int cap = std::max(1, tps / 15);  // after a lag spike, catch up at most 1/15 s
+        int cap = std::max(1, std::max(tps, 240) / 15);  // after a lag spike, catch up at most 1/15 s
         if (steps > cap) {
             steps = cap;
             tpsCarry = 0.0;
