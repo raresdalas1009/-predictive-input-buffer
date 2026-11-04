@@ -5531,6 +5531,7 @@ namespace {
         int lastRecheck = -1000;
         int recheckFails = 0;  // test 33: re-checks in a row that died sooner than the route
         int beforeLimit = INT_MAX;  // test 32: after a take-back, the next search looks before it
+        bool afterTakeback = false;  // test 37: the next working timing is taken as it is (latest first)
         std::vector<int> orbFirst;  // test 35: clicks in the middle of the orbs passed before the death, tried first
         std::string why;
     };
@@ -5818,17 +5819,36 @@ namespace {
         return !holdMode && !routeHeldAt(t);
     }
 
-    void routeAccept(int hi, int lo, int variant) {
+    void routeAccept(PlayLayer* layer, PlayerObject* p1, int hi, int lo, int variant) {
         int t = (hi + lo) / 2;  // the middle of the timings that work: room on both sides
-        bool tap = variant == 0 && routeTapMode(t);
+        bool tapMode = routeTapMode(t);
+        bool tap = variant == 0 && tapMode;
         route.flips.push_back(t);
         int last = t;
         if (tap) {
             last = t + st(3);
             route.flips.push_back(last);
         }
+        else if (tapMode) {
+            // v3.0 test 37: a held press outside wave / ship (it jumps again on every landing while
+            // held, and nothing ever let go: the cube hopped along flat ground for no reason). Let go
+            // at the first of these that still gets as far as holding does.
+            auto const& cp = routeCpAtOrBefore(t);
+            int length = route.death - cp.tick + st(120);
+            int held = routeSim(layer, p1, cp, route.flips, length, false);
+            for (int r : { st(10), st(20), st(35), st(60) }) {
+                auto f = route.flips;
+                f.push_back(t + r);
+                if (routeSim(layer, p1, cp, f, length, false) >= std::min(held, length)) {
+                    last = t + r;
+                    route.flips.push_back(last);
+                    break;
+                }
+            }
+        }
         route.groups.push_back({ t, last });
         route.sprinting = false;
+        route.afterTakeback = false;
         routeKeepCps(t);
     }
 
@@ -5841,13 +5861,18 @@ namespace {
         }
         auto g = route.groups.back();
         route.groups.pop_back();
-        route.bannedFirst.insert(g.first);
+        // v3.0 test 37: timings within 3 ticks of the one that failed aren't tried again; earlier
+        // AND later ones are (test 32-36 only looked earlier, and a jump that had to be a bit later
+        // was never found: Stereo Madness 20%)
+        for (int d = -st(3); d <= st(3); ++d) {
+            route.bannedFirst.insert(g.first + d);
+        }
+        route.afterTakeback = true;
         while (!route.flips.empty() && route.flips.back() >= g.first) {
             route.flips.pop_back();
         }
         ++route.takebacks;
         route.sprinting = false;
-        route.beforeLimit = g.first;
         routeKeepCps(g.first);
     }
 
@@ -5866,7 +5891,7 @@ namespace {
                 int length = route.death - cpTick + st(120);
                 int lived = routeSim(layer, p1, cp, routeWith(t, tapMode), length, false);
                 if (lived >= length) {
-                    routeAccept(t, t, 0);  // the orb's middle gets through: taken as it is
+                    routeAccept(layer, p1, t, t, 0);  // the orb's middle gets through: taken as it is
                     return;
                 }
                 if (cpTick + lived > route.bestEnd) {
@@ -5879,10 +5904,10 @@ namespace {
         }
         if (route.cand < route.lower) {
             if (route.windowHi >= 0) {
-                routeAccept(route.windowHi, route.lower, route.windowVariant);
+                routeAccept(layer, p1, route.windowHi, route.lower, route.windowVariant);
             }
             else if (route.bestT >= 0 && route.bestEnd >= route.death + st(6)) {
-                routeAccept(route.bestT, route.bestT, route.bestV);
+                routeAccept(layer, p1, route.bestT, route.bestT, route.bestV);
             }
             else if (!route.fine) {
                 route.fine = true;  // the quick pass (every 2-3 ticks) found nothing: now every tick
@@ -5921,14 +5946,18 @@ namespace {
             // the last moment possible and every easy jump came out late and frame perfect
             int wstep = st(2);
             if (!ok) {
-                routeAccept(route.windowHi, std::min(route.windowHi, t + wstep), route.windowVariant);
+                routeAccept(layer, p1, route.windowHi, std::min(route.windowHi, t + wstep), route.windowVariant);
             }
             else if (route.windowHi - t >= st(60) || t - wstep < route.lower) {
-                routeAccept(route.windowHi, t, route.windowVariant);
+                routeAccept(layer, p1, route.windowHi, t, route.windowVariant);
             }
             else {
                 route.cand -= wstep;
             }
+            return;
+        }
+        if (ok && route.afterTakeback) {
+            routeAccept(layer, p1, t, t, v);  // test 37: right after a take-back: this timing itself
             return;
         }
         if (ok && !route.fine) {
