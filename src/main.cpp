@@ -5961,7 +5961,7 @@ namespace {
         beam = {};
         beam.triedFor = route.death;
         beam.death = route.death;
-        beam.target = route.death + st(240);
+        beam.target = route.death + st(150);  // test 44: shorter tests (was 1 s past the death)
         beam.start = routeCpAtOrBefore(std::max(route.death - st(720), tickCount + 1));
         std::vector<int> base;
         for (int f : route.flips) {
@@ -6050,7 +6050,7 @@ namespace {
             return;
         }
         auto const& base = beam.items[beam.item];
-        int hi = std::min(base.end - 1, base.last + st(300));
+        int hi = std::min(base.end - 1, base.last + st(200));
         if (beam.cand > hi) {
             ++beam.item;
             if (beam.item < beam.items.size()) {
@@ -6093,7 +6093,7 @@ namespace {
         }
         else {
             beam.variant = 0;
-            beam.cand += holdMode ? st(3) : st(4);
+            beam.cand += holdMode ? st(3) : st(5);
         }
     }
 
@@ -6445,14 +6445,14 @@ namespace {
             autoplay.frameMs = 0.0;
         }
         double frameMs = std::max(1.0, CCDirector::get()->getDeltaTime() * 1000.0);
-        // v3.0 test 35: twice the planning time of test 34 (asked for: more thinking, a little FPS)
+        // v3.0 test 44: back to about half a frame (test 35's double time dropped the FPS)
 #ifdef GEODE_IS_MOBILE
-        double budget = std::clamp(frameMs * 0.9, 4.0, 10.0);
+        double budget = std::clamp(frameMs * 0.5, 2.0, 5.0);
 #else
-        double budget = std::clamp(frameMs * 0.9, 4.0, 16.0);
+        double budget = std::clamp(frameMs * 0.5, 2.0, 8.0);
 #endif
         if (route.end - tickCount < st(60)) {
-            budget *= 2.0;  // the planned part is about to run out
+            budget *= 1.5;  // the planned part is about to run out
         }
         auto start = std::chrono::steady_clock::now();
         double left = budget - autoplay.frameMs;
