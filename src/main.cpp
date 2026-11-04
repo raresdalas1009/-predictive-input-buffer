@@ -5916,15 +5916,18 @@ namespace {
             route.bestV = v;
         }
         if (route.windowHi >= 0) {
-            // measuring the window of timings that work
+            // measuring the window of timings that work. v3.0 test 36: the WHOLE window (up to
+            // 0.25 s, 2 ticks a step): test 35 stopped after 8 ticks, so "the middle" was still
+            // the last moment possible and every easy jump came out late and frame perfect
+            int wstep = st(2);
             if (!ok) {
-                routeAccept(route.windowHi, t + 1, route.windowVariant);
+                routeAccept(route.windowHi, std::min(route.windowHi, t + wstep), route.windowVariant);
             }
-            else if (route.windowHi - t >= st(8)) {
+            else if (route.windowHi - t >= st(60) || t - wstep < route.lower) {
                 routeAccept(route.windowHi, t, route.windowVariant);
             }
             else {
-                --route.cand;
+                route.cand -= wstep;
             }
             return;
         }
