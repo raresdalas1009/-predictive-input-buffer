@@ -4650,7 +4650,12 @@ namespace {
                 autoplay.tag->removeFromParent();
             }
             if (buf.appliedInput) {
-                sendButton(layer, false);
+                // autoplay pressed on the players directly, so it lets go the same way
+                buf.appliedInput = false;
+                layer->m_player1->releaseButton(PlayerButton::Jump);
+                if (layer->m_player2) {
+                    layer->m_player2->releaseButton(PlayerButton::Jump);
+                }
             }
         }
         say("autoplay off{} ({} inputs)", why, autoplay.inputs);
@@ -4828,11 +4833,31 @@ namespace {
         return survived;
     }
 
+    // v3.0 test 12: autoplay presses on the player itself, like the ghost does, instead of through
+    // the game's button handling. Click Between Frames moves clicks that go through there to a
+    // sub-frame moment taken from the real clock, so the same plan landed a little differently
+    // every attempt: replays drifted and the ghost's predictions missed.
+    void autoplayButton(PlayLayer* layer, bool down) {
+        buf.appliedInput = down;
+        bool dual = layer->m_gameState.m_isDualMode && layer->m_player2;
+        for (auto* p : { layer->m_player1, dual ? layer->m_player2 : nullptr }) {
+            if (!p) {
+                continue;
+            }
+            if (down) {
+                p->pushButton(PlayerButton::Jump);
+            }
+            else {
+                p->releaseButton(PlayerButton::Jump);
+            }
+        }
+    }
+
     void autoplaySet(PlayLayer* layer, bool down) {
         if (buf.appliedInput == down) {
             return;
         }
-        sendButton(layer, down);
+        autoplayButton(layer, down);
         ++autoplay.inputs;
         autoplay.attemptFlips.push_back({ autoplay.attemptTick - 1, down });
     }
@@ -4844,7 +4869,7 @@ namespace {
     // a new attempt: the learned inputs are replayed from the start again
     void autoplayAttemptStart(PlayLayer* layer) {
         if (buf.appliedInput) {
-            sendButton(layer, false);  // always start let go
+            autoplayButton(layer, false);  // always start let go
         }
         autoplay.planSafeUntil = -1;
         autoplay.attemptTick = 0;
