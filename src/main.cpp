@@ -5422,9 +5422,12 @@ namespace {
         int stuckAt = 0;
         int drawnAt = -1000;
         bool changed = false;
+        bool fine = false;  // test 28: the search goes a few ticks at a time first, then tick by tick
         std::string why;
     };
     Route route;
+    double routeSimMs = 0.0;  // test 28: what the route's tests cost (shown at a death)
+    int routeSimCount = 0;
     int routeReports = 0;
     int routeDrifts = 0;
     constexpr int SNAP_MAX = 48;
@@ -5558,7 +5561,10 @@ namespace {
             buf.cpSink = &routeCpSink;
         }
         SimEnd end;
+        auto simStart = std::chrono::steady_clock::now();
         int lived = simulate(layer, p1, nullptr, false, 0, true, length, -1, length, &end);
+        routeSimMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - simStart).count();
+        ++routeSimCount;
         buf.recordPath = nullptr;
         buf.cpEvery = 0;
         buf.cpSink = nullptr;
@@ -5633,6 +5639,12 @@ namespace {
         route.cand = death - 1;
         route.variant = 0;
         route.windowHi = -1;
+        route.fine = false;
+    }
+
+    int routeCoarseStep(int t) {
+        auto const& cp = routeCpAtOrBefore(t);
+        return (cp.snap->m_isDart || cp.snap->m_isShip) ? st(2) : st(3);
     }
 
     // a flip group at t: variant 0 outside wave / ship while let go is a tap, otherwise a flip
@@ -5687,14 +5699,21 @@ namespace {
             if (route.windowHi >= 0) {
                 routeAccept(route.windowHi, route.lower, route.windowVariant);
             }
+            else if (!route.fine) {
+                // test 28: the quick pass (every 2-3 ticks) found nothing: now every tick
+                route.fine = true;
+                route.cand = route.death - 1;
+                route.variant = 0;
+            }
             else {
                 routeTakeBack(layer);
             }
             return;
         }
         int t = route.cand;
+        int step = route.fine ? 1 : routeCoarseStep(t);
         if (route.bannedFirst.count(t)) {
-            --route.cand;
+            route.cand -= step;
             route.variant = 0;
             return;
         }
@@ -5710,10 +5729,22 @@ namespace {
             if (!ok) {
                 routeAccept(route.windowHi, t + 1, route.windowVariant);
             }
-            else if (route.windowHi - t >= st(12)) {
+            else if (route.windowHi - t >= st(8)) {
                 routeAccept(route.windowHi, t, route.windowVariant);
             }
             else {
+                --route.cand;
+            }
+            return;
+        }
+        if (ok && !route.fine) {
+            // test 28: the quick pass found one: tick by tick from just above it, for the latest
+            route.fine = true;
+            route.variant = v;
+            route.cand = std::min(t + step - 1, route.death - 1);
+            if (route.cand == t) {
+                route.windowHi = t;
+                route.windowVariant = v;
                 --route.cand;
             }
             return;
@@ -5729,7 +5760,7 @@ namespace {
         }
         else {
             route.variant = 0;
-            --route.cand;
+            route.cand -= step;
         }
     }
 
@@ -5873,9 +5904,12 @@ namespace {
         sweepGhostLayer();
         autoplay.frameMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 
-        if (tickCount >= route.end) {
-            return false;  // not planned this far (yet): the short planner looks after this tick
+        if (tickCount >= route.end && route.stuck) {
+            return false;  // stuck here: the short planner looks after this part
         }
+        // (test 28: while the route is being redone from a saved state behind you, you keep its
+        // inputs: test 27 let the short planner press here, which put you off the route, and the
+        // route started over from nothing again and again)
         // the button as the route has it for this tick
         bool want = route.originHeld;
         for (int f : route.flips) {
@@ -5887,7 +5921,7 @@ namespace {
         autoplaySet(layer, want);
         autoplay.plan.clear();
         autoplay.verifyAt = -1;
-        autoplay.planSafeUntil = at + (route.end - tickCount);
+        autoplay.planSafeUntil = at + std::max(0, route.end - tickCount);
         if (!route.stuck) {
             autoplay.killer = "the route said this was safe";
         }
@@ -7764,6 +7798,14 @@ class $modify(BufPlayLayer, PlayLayer) {
             say("  you hit object {} (type {}) at x {:.0f} y {:.0f} when at x {:.0f} y {:.0f} | {}", object ? object->m_objectID : 0,
                 object ? static_cast<int>(object->m_objectType) : -1, object ? object->getPositionX() : 0.f, object ? object->getPositionY() : 0.f,
                 player->getPositionX(), player->getPositionY(), autoplay.killer.empty() ? "no ghost report" : autoplay.killer);
+            if (route.active) {
+                say("  route: planned {} ticks past you{}; {} tests so far, {:.2f} ms each", route.end - tickCount,
+                    route.stuck ? " (stuck)"
+                    : route.sprinting ? fmt::format(" (looking for a way past tick {}: at {}, down to {}{})", route.death - route.origin,
+                                            route.cand - route.origin, route.lower - route.origin, route.fine ? ", tick by tick" : "")
+                                      : "",
+                    routeSimCount, routeSimCount ? routeSimMs / routeSimCount : 0.0);
+            }
             // v3.0 test 26: the ghost didn't see what killed you: where you died is avoided from now on
             if (expected && !replaying) {
                 auto r = player->getObjectRect();
