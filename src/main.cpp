@@ -213,7 +213,8 @@ namespace {
         bool tryBothOrbs = true;     // v2.4: if a run touches an orb and dies, retry with the other orb choice
         bool orbClick = true;        // v2.4: orb choice of the current run
         bool touchedOrb = false;     // v2.4: the current run touched an orb
-        bool fullHorizon = false;    // v3.0 autoplay: only surviving the whole look-ahead counts (no "landed = safe")
+        bool fullHorizon = false;
+        std::vector<int> const* plan = nullptr;  // v3.0 autoplay: ticks (from now) at which the ghost flips its button    // v3.0 autoplay: only surviving the whole look-ahead counts (no "landed = safe")
         bool skipPress = false;      // v2.4: run without pressing anything (auto-release hold check)
         bool avoidMovers = true;     // v2.4: don't buffer when the ghost's path has moving objects
         bool sawMover = false;       // v2.4: a run this decision touched a moving object
@@ -2613,6 +2614,17 @@ namespace {
                     pressGhost(buf.ghost2, !down);
                 }
             }
+            if (buf.plan) {
+                for (int t : *buf.plan) {
+                    if (t == tick) {
+                        bool now = !buf.held1;
+                        pressGhost(buf.ghost1, now);
+                        if (second) {
+                            pressGhost(buf.ghost2, now);
+                        }
+                    }
+                }
+            }
 
             // v2.18: with CBF the click lands partway through a tick, so the ghost's first
             // step is only the rest of that tick; after it, ghost and game are on the same
@@ -4596,10 +4608,12 @@ namespace {
     struct Autoplay {
         bool active = false;
         PlayLayer* layer = nullptr;
-        int safeUntil = -1;   // tick until which the current button state is known to be fine
         int inputs = 0;
         int userUntil = -1;   // Take Over: your last click; the bot waits until this tick
         bool takeOver = false;
+        std::vector<int> plan;  // absolute ticks at which to flip the button
+        int verifyAt = -1;      // next tick to check the plan still works
+        int sims = 0;           // planner budget used for one search
         CCLabelBMFont* tag = nullptr;
     };
     Autoplay autoplay;
@@ -4665,65 +4679,131 @@ namespace {
         return true;
     }
 
+    // v3.0 test 5: autoplay plans a whole route (every press and release for the next half second)
+    // instead of deciding one click at a time, and sticks to it. One-click-at-a-time chose any
+    // corridor that survived a moment, so in levels with several paths it went into dead ends
+    // and flipped the button almost every tick.
+    struct PlanCtx {
+        PlayLayer* layer;
+        PlayerObject* p1;
+        PlayerObject* p2;
+        bool dual;
+        int horizon;
+    };
+
+    int simulatePlan(PlanCtx const& c, std::vector<int> const& rel) {
+        SimEnd end;
+        buf.plan = &rel;
+        buf.skipPress = true;
+        int survived = simulate(c.layer, c.p1, c.p2, c.dual, 0, true, c.horizon, -1, c.horizon, &end);
+        buf.skipPress = false;
+        buf.plan = nullptr;
+        ++autoplay.sims;
+        return survived;
+    }
+
+    // depth-limited search: flips go in right before the ghost would die, latest first (late and
+    // few flips is how a player plays); returns ticks survived, `best` gets the longest plan seen
+    int planSearch(PlanCtx const& c, std::vector<int>& rel, int depth, int budget, std::vector<int>& best, int& bestLen) {
+        int survived = simulatePlan(c, rel);
+        if (survived > bestLen || (survived == bestLen && rel.size() < best.size())) {
+            bestLen = survived;
+            best = rel;
+        }
+        if (survived >= c.horizon || depth == 0 || autoplay.sims >= budget) {
+            return survived;
+        }
+        int last = rel.empty() ? -1 : rel.back();
+        for (int back : { 1, 3, 6, 10, 15, 22, 30 }) {
+            int t = survived - st(back);
+            if (t <= last) {
+                if (back == 1) {
+                    t = last + 1;  // at least try the very next tick
+                }
+                else {
+                    break;
+                }
+            }
+            if (t < 0 || t > survived) {
+                continue;
+            }
+            rel.push_back(t);
+            int r = planSearch(c, rel, depth - 1, budget, best, bestLen);
+            rel.pop_back();
+            if (r >= c.horizon || autoplay.sims >= budget) {
+                return r;
+            }
+            if (t == last + 1) {
+                break;
+            }
+        }
+        return survived;
+    }
+
     void autoplayTick(PlayLayer* layer, PlayerObject* p1) {
         if (!autoplay.active || autoplay.layer != layer || p1->m_isDead || !buf.ghost1 || buf.owner != layer) {
             return;
         }
-        // Take Over: your clicks go first; the bot plays on once you've stopped for a moment
+        // Take Over: your clicks go first; the bot plans again once you've stopped for a moment
         if (autoplay.takeOver && tickCount < autoplay.userUntil) {
+            autoplay.plan.clear();
+            autoplay.verifyAt = -1;
             return;
         }
         resetPending();
-        if (tickCount < autoplay.safeUntil) {
+        bool dual = layer->m_gameState.m_isDualMode && layer->m_player2;
+        PlanCtx c { layer, p1, dual ? layer->m_player2 : nullptr, dual, st(120) };
+
+        // follow the plan: flips due now
+        while (!autoplay.plan.empty() && autoplay.plan.front() <= tickCount) {
+            autoplay.plan.erase(autoplay.plan.begin());
+            sendButton(layer, !buf.appliedInput);
+            ++autoplay.inputs;
+        }
+        if (tickCount < autoplay.verifyAt) {
             return;
         }
-        bool dual = layer->m_gameState.m_isDualMode && layer->m_player2;
-        auto* p2 = dual ? layer->m_player2 : nullptr;
-        bool flyer = isFlying(p1) || (p2 && isFlying(p2));
-        // v3.0 test 4: a short look-ahead for flying modes (a tight wave needs a switch every few
-        // ticks, so a long one made every plan "die" and the pick was nearly random), a longer
-        // one on the ground. Only surviving all of it counts: "landed = safe" (the buffer's rule
-        // for one click) let autoplay stop looking right before the next spike.
-        int horizon = st(flyer ? 44 : 100);
-        // autoplay acts at the start of a tick, so the ghost's first step is a whole tick
-        // (not the part-tick left from your last Click Between Frames click)
+
         float savedStep = buf.firstStep;
-        buf.firstStep = 1.f;
+        buf.firstStep = 1.f;  // autoplay acts at the start of a tick: the ghost's first step is whole
         buf.fullHorizon = true;
-        SimEnd end;
-        // 1. keep the button as it is
-        buf.skipPress = true;
-        int keep = simulate(layer, p1, p2, dual, 0, true, horizon, -1, horizon, &end);
-        buf.skipPress = false;
-        int best = -1;
-        bool down = !buf.appliedInput;
-        if (keep < horizon) {
-            // 2. switch now (press or let go), then switch back after some time, or never
-            static constexpr int FLY_BACK[] = { -1, 2, 4, 7, 11, 16, 24 };
-            static constexpr int GROUND_BACK[] = { -1, 2, 5, 10, 18, 30 };
-            auto const* backs = flyer ? FLY_BACK : GROUND_BACK;
-            size_t count = flyer ? std::size(FLY_BACK) : std::size(GROUND_BACK);
-            for (size_t i = 0; i < count; ++i) {
-                int back = backs[i] < 0 ? -1 : st(backs[i]);
-                int s = simulate(layer, p1, p2, dual, 0, down, horizon, back, horizon, &end);
-                best = std::max(best, s);
-                if (best >= horizon) {
+        std::vector<int> rel;
+        for (int t : autoplay.plan) {
+            rel.push_back(t - tickCount);
+        }
+        autoplay.sims = 0;
+        int survived = simulatePlan(c, rel);
+        if (survived < c.horizon) {
+            // the plan (or doing nothing) crashes: find a new one, fewest flips first
+            std::vector<int> best;
+            int bestLen = -1;
+            int budget = 60;  // ghost runs per search (a few ms on PC; heavier on old phones)
+            for (int depth = 1; depth <= 8 && autoplay.sims < budget; ++depth) {
+                std::vector<int> start;
+                int r = planSearch(c, start, depth, budget, best, bestLen);
+                if (r >= c.horizon || bestLen >= c.horizon) {
                     break;
                 }
             }
+            rel = best;
+            survived = bestLen;
         }
         buf.fullHorizon = false;
         buf.firstStep = savedStep;
         sweepGhostLayer();
-        if (keep >= horizon) {
-            autoplay.safeUntil = tickCount + st(2);  // check again very soon
-            return;
+        autoplay.plan.clear();
+        for (int t : rel) {
+            autoplay.plan.push_back(tickCount + t);
         }
-        if (best > keep) {
-            sendButton(layer, down);
+        // flips due right now
+        while (!autoplay.plan.empty() && autoplay.plan.front() <= tickCount) {
+            autoplay.plan.erase(autoplay.plan.begin());
+            sendButton(layer, !buf.appliedInput);
             ++autoplay.inputs;
-            autoplay.safeUntil = -1;
         }
+        // a working plan is re-checked now and then (moving things can change); a failing one
+        // is searched for again next tick
+        autoplay.verifyAt = tickCount + (survived >= c.horizon ? st(8) : 1);
     }
 
     void tryAutoRelease(PlayLayer* layer, PlayerObject* p1) {
@@ -7484,7 +7564,8 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
                 return;
             }
             autoplay.userUntil = tickCount + st(down ? 90 : 60);
-            autoplay.safeUntil = -1;
+            autoplay.plan.clear();
+            autoplay.verifyAt = -1;
         }
         if (!buf.simulating && button == 1 && !buf.injecting) {
             auto* p1 = this->m_player1;
