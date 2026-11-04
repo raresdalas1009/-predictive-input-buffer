@@ -5433,15 +5433,14 @@ namespace {
     Route route;
     double routeSimMs = 0.0;  // test 28: what the route's tests cost (shown at a death)
     int routeSimCount = 0;
-
+    int routeReports = 0;
+    int routeDrifts = 0;
     void routeCountersReset() {
         routeReports = 0;
         routeDrifts = 0;
         routeSimMs = 0.0;
         routeSimCount = 0;
     }
-    int routeReports = 0;
-    int routeDrifts = 0;
     constexpr int SNAP_MAX = 48;
     std::vector<PlayerObject*> snapFree;
     std::vector<PlayerObject*> snapAll;
