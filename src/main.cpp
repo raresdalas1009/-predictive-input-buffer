@@ -4907,17 +4907,11 @@ namespace {
                 push(std::move(child));
             }
         }
-        static constexpr int GROUND_BACKS[] = { 2, 5, 9, 14, 20, 27, 35, 45, 56, 70, 85, 100 };
-        static constexpr int FLY_BACKS[] = { 1, 2, 4, 6, 9, 13, 18, 24 };
+        // v3.0 test 21: every 3 ticks (2 in wave / ship) from the crash all the way back. Test 20 had
+        // gaps of 10-15 ticks, so a jump that only works in a window of a few ticks was stepped over
         std::vector<int> backs;
-        if (c.holdMode) {
-            backs.assign(std::begin(FLY_BACKS), std::end(FLY_BACKS));
-        }
-        else {
-            backs.assign(std::begin(GROUND_BACKS), std::end(GROUND_BACKS));
-        }
-        int stepBack = c.holdMode ? 6 : 12;
-        for (int b = backs.back() + stepBack; st(b) <= survived - lastRel; b += stepBack) {
+        int stepBack = c.holdMode ? 2 : 3;
+        for (int b = 1; st(b) <= survived - lastRel; b += stepBack) {
             backs.push_back(b);
         }
         for (int back : backs) {
@@ -4944,10 +4938,29 @@ namespace {
                 break;
             }
         }
-        if (autoplay.queue.size() > 4000) {
+        if (autoplay.queue.size() > 20000) {
             std::sort_heap(autoplay.queue.begin(), autoplay.queue.end());
-            autoplay.queue.erase(autoplay.queue.begin(), autoplay.queue.end() - 2000);
+            autoplay.queue.erase(autoplay.queue.begin(), autoplay.queue.end() - 10000);
             std::make_heap(autoplay.queue.begin(), autoplay.queue.end());
+        }
+    }
+
+    // v3.0 test 21: a plan got further than the one it came from: try its last press a tick or two
+    // earlier and later too (exact timings), ahead of everything else in the queue
+    void enqueueNeighbours(std::vector<int> const& plan, int score, int pressIndex) {
+        for (int d : { -2, -1, 1, 2 }) {
+            std::vector<int> child = plan;
+            for (size_t i = pressIndex; i < child.size(); ++i) {
+                child[i] += st(d);
+            }
+            int prev = pressIndex > 0 ? child[pressIndex - 1] : tickCount - 1;
+            if (child[pressIndex] <= prev || child[pressIndex] < tickCount) {
+                continue;
+            }
+            if (autoplay.seen.insert(child).second) {
+                autoplay.queue.push_back({ score, std::move(child) });
+                std::push_heap(autoplay.queue.begin(), autoplay.queue.end());
+            }
         }
     }
 
@@ -5164,6 +5177,17 @@ namespace {
                 }
                 int len = simulatePlan(c, r);
                 auto orbs = buf.orbTouches;
+                if (len > item.score && !item.plan.empty()) {
+                    // the newest press: the first flip added after the parent (a tap adds two)
+                    int pressIndex = static_cast<int>(item.plan.size()) - 1;
+                    if (pressIndex > 0 && !c.holdMode) {
+                        bool tapRelease = (c.held0 != (pressIndex % 2 == 1)) && item.plan[pressIndex] - item.plan[pressIndex - 1] <= st(10);
+                        if (tapRelease) {
+                            --pressIndex;
+                        }
+                    }
+                    enqueueNeighbours(item.plan, len, pressIndex);
+                }
                 if (len > survived) {
                     // only a plan that really lasts longer replaces the current one (v3.0 test 16
                     // also switched to equally bad plans: the wave turned for no reason)
