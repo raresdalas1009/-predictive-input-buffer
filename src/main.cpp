@@ -4868,6 +4868,7 @@ namespace {
     void makeSnaps(PlayLayer* layer);
     void dropSnaps(bool release);
     void buildObjIndex(PlayLayer* layer);
+    void routeCountersReset();
 
     void endGenerating(char const* result) {
         if (!autoplay.generating) {
@@ -5004,6 +5005,7 @@ namespace {
         makeSnaps(layer);
         buildObjIndex(layer);
         routeReset();
+        routeCountersReset();
         say("autoplay: the route is planned up to 10 s ahead while it plays ({} level objects indexed)", [] {
             size_t n = 0;
             for (auto const& [k, v] : buf.objIndex) {
@@ -5415,6 +5417,9 @@ namespace {
         int variant = 0;
         int windowHi = -1;
         int windowVariant = 0;
+        int bestT = -1;  // test 29: the input that got furthest so far in this search
+        int bestV = 0;
+        int bestEnd = 0;
         int takebacks = 0;
         int frontier = 0;
         std::set<int> bannedFirst;
@@ -5428,6 +5433,13 @@ namespace {
     Route route;
     double routeSimMs = 0.0;  // test 28: what the route's tests cost (shown at a death)
     int routeSimCount = 0;
+
+    void routeCountersReset() {
+        routeReports = 0;
+        routeDrifts = 0;
+        routeSimMs = 0.0;
+        routeSimCount = 0;
+    }
     int routeReports = 0;
     int routeDrifts = 0;
     constexpr int SNAP_MAX = 48;
@@ -5640,6 +5652,8 @@ namespace {
         route.variant = 0;
         route.windowHi = -1;
         route.fine = false;
+        route.bestT = -1;
+        route.bestEnd = death;
     }
 
     int routeCoarseStep(int t) {
@@ -5693,15 +5707,20 @@ namespace {
         routeKeepCps(g.first);
     }
 
-    // one test of the search (latest first, then how far the working window goes)
+    // one test of the search. Latest first: an input that gets well past the death is taken (the
+    // middle of the timings that do). v3.0 test 29: none does -> the one that got furthest is
+    // taken anyway, and the next death gets its own search (test 28 wanted one input to clear
+    // everything up to 0.2 s past the death, so a part that needs two quick inputs was "stuck")
     void routeSprintStep(PlayLayer* layer, PlayerObject* p1) {
         if (route.cand < route.lower) {
             if (route.windowHi >= 0) {
                 routeAccept(route.windowHi, route.lower, route.windowVariant);
             }
+            else if (route.bestT >= 0 && route.bestEnd >= route.death + st(6)) {
+                routeAccept(route.bestT, route.bestT, route.bestV);
+            }
             else if (!route.fine) {
-                // test 28: the quick pass (every 2-3 ticks) found nothing: now every tick
-                route.fine = true;
+                route.fine = true;  // the quick pass (every 2-3 ticks) found nothing: now every tick
                 route.cand = route.death - 1;
                 route.variant = 0;
             }
@@ -5722,8 +5741,15 @@ namespace {
         int v = route.windowHi >= 0 ? route.windowVariant : route.variant;
         auto flips = routeWith(t, tapMode && v == 0);
         auto const& cp = routeCpAtOrBefore(t);
-        int length = route.death - cp.tick + st(48);
-        bool ok = routeSim(layer, p1, cp, flips, length, false) >= length;
+        int cpTick = cp.tick;
+        int length = route.death - cpTick + st(120);
+        int lived = routeSim(layer, p1, cp, flips, length, false);
+        bool ok = lived >= length;
+        if (cpTick + lived > route.bestEnd) {
+            route.bestEnd = cpTick + lived;
+            route.bestT = t;
+            route.bestV = v;
+        }
         if (route.windowHi >= 0) {
             // measuring the window of timings that work
             if (!ok) {
@@ -5738,7 +5764,7 @@ namespace {
             return;
         }
         if (ok && !route.fine) {
-            // test 28: the quick pass found one: tick by tick from just above it, for the latest
+            // the quick pass found one: tick by tick from just above it, for the latest
             route.fine = true;
             route.variant = v;
             route.cand = std::min(t + step - 1, route.death - 1);
@@ -5848,7 +5874,7 @@ namespace {
             if (k >= 0 && k < static_cast<int>(route.pos.size())) {
                 auto want = route.pos[k];
                 auto now = p1->getPosition();
-                if (std::abs(want.x - now.x) > 3.f || std::abs(want.y - now.y) > 3.f) {
+                if (std::abs(want.x - now.x) > 5.f || std::abs(want.y - now.y) > 5.f) {
                     if (routeDrifts < 12) {
                         ++routeDrifts;
                         say("route drift at tick {} ({}): you're at {:.0f},{:.0f}, the route said {:.0f},{:.0f}, planning again from you", at,
