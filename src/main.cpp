@@ -327,6 +327,12 @@ namespace {
         std::unordered_map<int, std::vector<GameObject*>> objIndex;
         std::unordered_set<GameObject*> seenThisCheck;
         bool inCheck = false;
+        // v3.0 test 45: wave / ship routes stay in a band around where the stretch starts (leaving it
+        // counts as a death in the route's tests), so the route flies steadily instead of to the
+        // top and bottom of every corridor
+        bool yBand = false;
+        float yBandCenter = 0.f;
+        float yBandHalf = 0.f;
         bool postCollisionSeen = false;  // test 33: GD called postCollision inside this collision check
         long long offscreenAdded = 0;    // objects the index added (shown at a death)
         long long offscreenFallback = 0; // ...of those, added after the check (postCollision never came)
@@ -2801,6 +2807,10 @@ namespace {
             }
             if (buf.ghostDied) {
                 died = true;
+                break;
+            }
+            if (buf.yBand && std::abs(buf.ghost1->getPositionY() - buf.yBandCenter) > buf.yBandHalf) {
+                died = true;  // test 45: out of the route's band (not a real death)
                 break;
             }
             if (buf.recordPath) {
@@ -5541,6 +5551,7 @@ namespace {
         int lastRecheck = -1000;
         int recheckFails = 0;  // test 33: re-checks in a row that died sooner than the route
         int beforeLimit = INT_MAX;  // test 32: after a take-back, the next search looks before it
+        int bandOffUntil = INT_MIN;  // test 45: the band is off for tests starting before this tick
         bool afterTakeback = false;  // test 37: the next working timing is taken as it is (latest first)
         std::vector<int> orbFirst;  // test 35: clicks in the middle of the orbs passed before the death, tried first
         std::vector<std::pair<int, int>> orbRanges;  // test 39: when the route touches orbs (first, last tick)
@@ -5696,10 +5707,16 @@ namespace {
             buf.cpEvery = routeCpEvery();
             buf.cpSink = &routeCpSink;
         }
+        buf.yBand = from.snap && (from.snap->m_isDart || from.snap->m_isShip) && from.tick > route.bandOffUntil;
+        if (buf.yBand) {
+            buf.yBandCenter = from.snap->getPositionY();
+            buf.yBandHalf = 75.f;
+        }
         SimEnd end;
         auto simStart = std::chrono::steady_clock::now();
         int lived = simulate(layer, p1, nullptr, false, 0, true, length, -1, length, &end);
         routeSimMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - simStart).count();
+        buf.yBand = false;
         ++routeSimCount;
         buf.recordPath = nullptr;
         buf.cpEvery = 0;
@@ -6167,6 +6184,18 @@ namespace {
                 route.fine = true;  // the quick pass (every 2-3 ticks) found nothing: now every tick
                 route.cand = route.candStart;
                 route.variant = 0;
+            }
+            else if (route.bandOffUntil < route.death) {
+                // test 45: nothing works inside the band here: this stretch may go anywhere
+                auto const& cp = routeCpAtOrBefore(route.death);
+                if (cp.snap->m_isDart || cp.snap->m_isShip || route.death - route.cps.front().tick < st(720)) {
+                    route.bandOffUntil = route.death + st(240);
+                    route.sprinting = false;
+                    routeKeepCps(routeCpAtOrBefore(std::max(route.death - st(480), route.cps.front().tick)).tick);
+                }
+                else {
+                    routeTakeBack(layer, p1);
+                }
             }
             else {
                 routeTakeBack(layer, p1);
