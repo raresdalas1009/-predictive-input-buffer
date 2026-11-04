@@ -4656,9 +4656,133 @@ namespace {
         std::vector<QItem> queue;
         std::set<std::vector<int>> seen;
         int queueBase = -1;  // tick the queue was built at (cleared when a flip happens)
+        // v3.0 test 24: the trail. Where you were every 4 ticks of this attempt, and of the part
+        // it knows; drawn in the level, saved with the inputs so it's known from the first attempt
+        std::vector<CCPoint> attemptTrail;
+        std::vector<CCPoint> knownTrail;
+        bool knowsWholeLevel = false;
+        std::vector<int> deathTicks;  // where this session's attempts ended (learning backs off at repeats)
+        std::string saveKey;
+        size_t levelHash = 0;
+        CCDrawNode* trailNode = nullptr;
         CCLabelBMFont* tag = nullptr;
     };
     Autoplay autoplay;
+
+    // v3.0 test 24: what autoplay learned on a level is saved, so it plays the known part right
+    // from the first attempt next time. A level that changed (new version) starts fresh.
+    int trailEvery() {
+        return st(4);
+    }
+
+    std::filesystem::path autoplayFile() {
+        return Mod::get()->getSaveDir() / "autoplay" / (autoplay.saveKey + ".txt");
+    }
+
+    void autoplayKey(GJGameLevel* level) {
+        autoplay.saveKey.clear();
+        autoplay.levelHash = 0;
+        if (!level) {
+            return;
+        }
+        int id = level->m_levelID.value();
+        if (id > 0) {
+            autoplay.saveKey = fmt::format("level_{}", id);
+        }
+        else {
+            std::string name = level->m_levelName;
+            for (auto& ch : name) {
+                if (!std::isalnum(static_cast<unsigned char>(ch))) {
+                    ch = '_';
+                }
+            }
+            autoplay.saveKey = "local_" + name;
+        }
+        autoplay.levelHash = std::hash<std::string> {}(std::string(level->m_levelString)) ^ static_cast<size_t>(level->m_levelVersion);
+    }
+
+    void saveAutoplay() {
+        if (autoplay.saveKey.empty() || autoplay.knownUntil <= 0) {
+            return;
+        }
+        std::error_code ec;
+        std::filesystem::create_directories(autoplayFile().parent_path(), ec);
+        std::ofstream out(autoplayFile(), std::ios::trunc);
+        out << "cbf-autoplay 1 " << autoplay.levelHash << ' ' << st(240) << '\n';
+        out << autoplay.knownUntil << ' ' << (autoplay.knowsWholeLevel ? 1 : 0) << '\n';
+        for (auto const& [t, down] : autoplay.known) {
+            out << "f " << t << ' ' << (down ? 1 : 0) << '\n';
+        }
+        for (auto const& pt : autoplay.knownTrail) {
+            out << "p " << pt.x << ' ' << pt.y << '\n';
+        }
+    }
+
+    void drawTrail() {
+        auto* d = autoplay.trailNode;
+        if (!d) {
+            return;
+        }
+        d->clear();
+        auto const& pts = autoplay.knownTrail;
+        ccColor4F line { 0.35f, 1.f, 0.65f, 1.f };
+        for (size_t i = 1; i < pts.size(); ++i) {
+            // a teleport portal jumps far in one step: no line across it
+            if (std::abs(pts[i].x - pts[i - 1].x) < 150.f && std::abs(pts[i].y - pts[i - 1].y) < 150.f) {
+                d->drawSegment(pts[i - 1], pts[i], 1.2f, line);
+            }
+        }
+        // the presses on the trail, as dots
+        int every = std::max(1, trailEvery());
+        for (auto const& [t, down] : autoplay.known) {
+            size_t i = static_cast<size_t>(t / every);
+            if (down && i < pts.size()) {
+                d->drawDot(pts[i], 3.f, { 1.f, 0.85f, 0.3f, 1.f });
+            }
+        }
+    }
+
+    void loadAutoplay(PlayLayer* layer) {
+        autoplayKey(layer->m_level);
+        if (autoplay.saveKey.empty()) {
+            return;
+        }
+        std::ifstream in(autoplayFile());
+        std::string magic;
+        int version = 0, rate = 0;
+        size_t hash = 0;
+        if (!(in >> magic >> version >> hash >> rate) || magic != "cbf-autoplay" || version != 1) {
+            return;
+        }
+        if (hash != autoplay.levelHash || rate != st(240)) {
+            say("autoplay: the level (or the TPS) changed since it was learned, it learns it again");
+            return;
+        }
+        int until = 0, whole = 0;
+        if (!(in >> until >> whole)) {
+            return;
+        }
+        std::string kind;
+        while (in >> kind) {
+            if (kind == "f") {
+                int t = 0, down = 0;
+                if (in >> t >> down) {
+                    autoplay.known.push_back({ t, down != 0 });
+                }
+            }
+            else if (kind == "p") {
+                float x = 0.f, y = 0.f;
+                if (in >> x >> y) {
+                    autoplay.knownTrail.push_back({ x, y });
+                }
+            }
+        }
+        autoplay.knownUntil = until;
+        autoplay.knowsWholeLevel = whole != 0;
+        say("autoplay: loaded what it learned here ({} inputs, {}){}", autoplay.known.size(),
+            autoplay.knowsWholeLevel ? "the whole level" : fmt::format("{:.1f} s of the level", until / static_cast<double>(st(240))),
+            ", it follows the trail from the next attempt");
+    }
 
     void stopAutoplay(char const* why) {
         if (!autoplay.active) {
@@ -4668,6 +4792,9 @@ namespace {
         if (layer && layer == autoplay.layer) {
             if (autoplay.tag) {
                 autoplay.tag->removeFromParent();
+            }
+            if (autoplay.trailNode) {
+                autoplay.trailNode->removeFromParent();
             }
             if (buf.appliedInput) {
                 // autoplay pressed on the players directly, so it lets go the same way
@@ -4725,6 +4852,11 @@ namespace {
         autoplay.tag->setID("autoplay-label"_spr);
         layer->addChild(autoplay.tag, 1000);
         say("autoplay on: the level is in test mode, nothing is saved as progress");
+        autoplay.trailNode = CCDrawNode::create();
+        autoplay.trailNode->setID("autoplay-trail"_spr);
+        (layer->m_aboveShaderObjectLayer ? layer->m_aboveShaderObjectLayer : layer->m_objectLayer)->addChild(autoplay.trailNode, 9998);
+        loadAutoplay(layer);
+        drawTrail();
         return true;
     }
 
@@ -5014,6 +5146,7 @@ namespace {
         autoplay.planSafeUntil = -1;
         autoplay.attemptTick = 0;
         autoplay.attemptFlips.clear();
+        autoplay.attemptTrail.clear();
         autoplay.plan.clear();
         autoplay.verifyAt = -1;
         autoplay.replayIdx = 0;
@@ -5029,12 +5162,20 @@ namespace {
             return;
         }
         int reached = autoplay.attemptTick;
-        if (autoplay.lastDeath >= 0 && std::abs(reached - autoplay.lastDeath) < st(30)) {
-            ++autoplay.sameDeaths;
+        if (autoplay.knowsWholeLevel && reached < autoplay.knownUntil) {
+            // the saved run didn't play the same this time: learn from here like any other death
+            autoplay.knowsWholeLevel = false;
         }
-        else {
-            autoplay.sameDeaths = 0;
+        // v3.0 test 24: deaths near this one in this session (test 23 counted only deaths in a row
+        // at the same spot, so dying somewhere else once reset it and it went back and forth)
+        autoplay.deathTicks.push_back(reached);
+        int here = 0;
+        for (int d : autoplay.deathTicks) {
+            if (std::abs(d - reached) < st(30)) {
+                ++here;
+            }
         }
+        autoplay.sameDeaths = here - 1;
         autoplay.lastDeath = reached;
         // v3.0 test 17: the last flip before the crash isn't made there again, so the next attempt
         // takes a different route instead of repeating the same one
@@ -5044,9 +5185,10 @@ namespace {
                 break;
             }
         }
-        // stuck at one spot: forget further back each time, so a different route gets tried
-        int keepUntil = reached - st(60) - autoplay.sameDeaths / 2 * st(90);
-        if (keepUntil > autoplay.knownUntil || autoplay.sameDeaths >= 2) {
+        // stuck at one spot: forget further back each time (0.25 s more per death there), so a
+        // different route gets tried sooner
+        int keepUntil = reached - st(60) - autoplay.sameDeaths * st(60);
+        if (keepUntil > autoplay.knownUntil || autoplay.sameDeaths >= 1) {
             autoplay.knownUntil = std::max(0, keepUntil);
             autoplay.known.clear();
             for (auto const& f : autoplay.attemptFlips) {
@@ -5054,8 +5196,28 @@ namespace {
                     autoplay.known.push_back(f);
                 }
             }
+            autoplay.knownTrail.clear();
+            for (size_t i = 0; i < autoplay.attemptTrail.size() && static_cast<int>(i) * trailEvery() < autoplay.knownUntil; ++i) {
+                autoplay.knownTrail.push_back(autoplay.attemptTrail[i]);
+            }
             say("autoplay remembers {} inputs ({} ticks of this level)", autoplay.known.size(), autoplay.knownUntil);
+            saveAutoplay();
+            drawTrail();
         }
+    }
+
+    // v3.0 test 24: a run to the end: the whole level is known and saved
+    void autoplayFinished(PlayLayer* layer) {
+        if (!autoplay.active || autoplay.layer != layer || layer->m_isPracticeMode || autoplay.userTouched) {
+            return;
+        }
+        autoplay.known = autoplay.attemptFlips;
+        autoplay.knownTrail = autoplay.attemptTrail;
+        autoplay.knownUntil = autoplay.attemptTick + st(240);
+        autoplay.knowsWholeLevel = true;
+        saveAutoplay();
+        drawTrail();
+        say("autoplay finished the level: the whole run is saved, it plays it the same from the first attempt next time");
     }
 
     void autoplayTick(PlayLayer* layer, PlayerObject* p1) {
@@ -5070,8 +5232,12 @@ namespace {
         }
         resetPending();
         int at = autoplay.attemptTick++;
+        if (at % trailEvery() == 0 && static_cast<size_t>(at / trailEvery()) == autoplay.attemptTrail.size()) {
+            autoplay.attemptTrail.push_back(p1->getPosition());
+        }
         // what it learned in earlier attempts: replayed exactly, no searching
-        if (!layer->m_isPracticeMode && at < autoplay.knownUntil) {
+        // (not in an attempt autoplay was started in the middle of: the inputs are from the start)
+        if (!layer->m_isPracticeMode && !autoplay.userTouched && at < autoplay.knownUntil) {
             while (autoplay.replayIdx < autoplay.known.size() && autoplay.known[autoplay.replayIdx].first <= at) {
                 if (autoplay.known[autoplay.replayIdx].first == at) {
                     autoplaySet(layer, autoplay.known[autoplay.replayIdx].second);
@@ -7149,6 +7315,11 @@ class $modify(BufPlayLayer, PlayLayer) {
         stopAutoplay("");
         dropGhosts();
         PlayLayer::onQuit();
+    }
+
+    void levelComplete() {
+        autoplayFinished(this);
+        PlayLayer::levelComplete();
     }
 
     void resetLevel() {
