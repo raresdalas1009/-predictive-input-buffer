@@ -15,6 +15,7 @@
 //  - Fixes: ghost lifetime, init using `this`, time-warp dt, F6 only when GD focused,
 //    dead flipGravity hook priority, optional console, in-game console (stage + live log, hidden by default).
 
+#include <set>
 #include <Geode/Geode.hpp>
 #include <Geode/utils/web.hpp>
 #include <Geode/modify/EffectGameObject.hpp>
@@ -4637,6 +4638,10 @@ namespace {
         int sameDeaths = 0;
         bool diedThisAttempt = false;  // noclip (Mega Hack) calls "death" every tick: count one
         int reports = 0;               // v3.0 test 15: search reports logged this attempt
+        // v3.0 test 17: flips (attempt ticks) that led to a crash, never tried there again (kept
+        // across attempts), and searches in a row that couldn't make the plan last longer
+        std::set<int> banned;
+        int stuck = 0;
         CCLabelBMFont* tag = nullptr;
     };
     Autoplay autoplay;
@@ -4721,6 +4726,8 @@ namespace {
         int horizon;
         bool held0;     // the button now
         bool holdMode;  // wave / ship: holding is a real choice; other modes default to let go
+        int at = 0;     // attempt tick now
+        std::set<int> const* banned = nullptr;  // attempt ticks where a flip already led to a crash
     };
 
     // the ghost runs the plan; orbs are only clicked by the plan itself (v3.0 test 8: "assume
@@ -4773,6 +4780,9 @@ namespace {
             }
         }
         for (int ot : orbTicks) {
+            if (c.banned && c.banned->count(c.at + ot)) {
+                continue;
+            }
             bool heldThen = c.held0 != (rel.size() % 2 == 1);
             size_t before = rel.size();
             if (heldThen) {
@@ -4813,7 +4823,7 @@ namespace {
                     break;
                 }
             }
-            if (t < 0 || t > survived) {
+            if (t < 0 || t > survived || (c.banned && c.banned->count(c.at + t))) {
                 continue;
             }
             // v3.0 test 16: outside wave / ship a press is tried three ways: a short tap, a longer
@@ -4908,6 +4918,14 @@ namespace {
             autoplay.sameDeaths = 0;
         }
         autoplay.lastDeath = reached;
+        // v3.0 test 17: the last flip before the crash isn't made there again, so the next attempt
+        // takes a different route instead of repeating the same one
+        for (auto it = autoplay.attemptFlips.rbegin(); it != autoplay.attemptFlips.rend(); ++it) {
+            if (it->first >= autoplay.knownUntil) {
+                autoplay.banned.insert(it->first);
+                break;
+            }
+        }
         // stuck at one spot: forget further back each time, so a different route gets tried
         int keepUntil = reached - st(60) - autoplay.sameDeaths / 2 * st(90);
         if (keepUntil > autoplay.knownUntil || autoplay.sameDeaths >= 2) {
@@ -4947,10 +4965,14 @@ namespace {
         bool dual = layer->m_gameState.m_isDualMode && layer->m_player2;
         auto* p2 = dual ? layer->m_player2 : nullptr;
         bool holdMode = p1->m_isDart || p1->m_isShip || (p2 && (p2->m_isDart || p2->m_isShip));
-        // v3.0 test 11: a shorter look-ahead (90 ground, 60 flying): with the learning backing up at
-        // dead ends it doesn't need to see as far, and each try costs less
+        // v3.0 test 17: the plan reaches 1.5 s ahead (300 ticks flying, 360 on the ground) and is
+        // extended at its far end every frame. A hard part is planned for while it's still far
+        // away (dozens of frames of search instead of one or two), and the next few ticks are
+        // already settled, so nothing is decided at the last moment.
         bool flyer = isFlying(p1) || (p2 && isFlying(p2));
-        PlanCtx c { layer, p1, p2, dual, st(flyer ? 60 : 90), buf.appliedInput, holdMode };
+        PlanCtx c { layer, p1, p2, dual, st(flyer ? 300 : 360), buf.appliedInput, holdMode };
+        c.at = at;
+        c.banned = layer->m_isPracticeMode ? nullptr : &autoplay.banned;
 
         // follow the plan: flips due now
         while (!autoplay.plan.empty() && autoplay.plan.front() <= tickCount) {
@@ -4966,12 +4988,13 @@ namespace {
             autoplay.frame = frame;
             autoplay.frameMs = 0.0;
         }
-        // v3.0 test 13: autoplay's own minimum time per frame (a showcase can spend a bit more than
-        // the buffer, which uses the "budget" setting): 8 ms on PC, 4 ms on phones
+        // v3.0 test 17: about 45% of a frame for planning (so the frame rate holds at any FPS),
+        // at most 8 ms on PC and 5 ms on phones
+        double frameMs = std::max(1.0, CCDirector::get()->getDeltaTime() * 1000.0);
 #ifdef GEODE_IS_MOBILE
-        double frameBudget = std::max(4.0, buf.userBudget);
+        double frameBudget = std::clamp(frameMs * 0.45, 2.0, 5.0);
 #else
-        double frameBudget = std::max(8.0, buf.userBudget);
+        double frameBudget = std::clamp(frameMs * 0.45, 2.0, 8.0);
 #endif
         if (at < st(6)) {
             frameBudget *= 3.0;  // the first ticks of an attempt or a respawn: plan properly at once
@@ -4990,46 +5013,56 @@ namespace {
         for (int t : autoplay.plan) {
             rel.push_back(t - tickCount);
         }
+        bool seeded = false;
+        if (rel.empty() && c.held0 && !c.holdMode) {
+            rel.push_back(0);  // outside wave / ship, holding means jumping again and again: let go
+            seeded = true;
+        }
         autoplay.sims = 0;
         int survived = simulatePlan(c, rel);
-        bool changed = false;
-        if (survived < st(20)) {
+        bool changed = seeded;
+        if (survived < st(30)) {
             // a crash is close: this frame may take longer (a tiny hitch beats a death)
             autoplay.searchCap = std::max(autoplay.searchCap, frameBudget * 2.0);
         }
-        if (survived < c.horizon) {
+        if (survived >= c.horizon) {
+            autoplay.stuck = 0;
+        }
+        else {
             std::vector<int> best = rel;
             int bestLen = survived;
-            int budget = 160;  // tries per search (each ~0.1-0.3 ms; the time budget usually stops it first)
-            // 1. cheapest: keep the plan and add flips where it would crash
-            {
-                std::vector<int> ext = rel;
-                planSearch(c, ext, 4, budget, best, bestLen);
+            std::vector<int> ext = rel;
+            planSearch(c, ext, 3, 400, best, bestLen);
+            bool timedOut = planOutOfTime();
+            if (bestLen > survived) {
+                // only a plan that really lasts longer replaces the current one (v3.0 test 16 also
+                // switched to equally bad plans: the wave turned for no reason)
+                rel = best;
+                survived = bestLen;
+                changed = true;
+                autoplay.stuck = 0;
             }
-            // 2. if that didn't do it, a fresh plan, fewest flips first. Outside wave / ship the plan
-            // starts by letting go: holding in cube, ball, UFO... means jumping again and again.
-            for (int depth = 1; depth <= 8 && bestLen < c.horizon && autoplay.sims < budget && !planOutOfTime(); ++depth) {
-                std::vector<int> start;
-                if (c.held0 && !c.holdMode) {
-                    start.push_back(0);
+            else if (!timedOut || ++autoplay.stuck >= 3) {
+                // nothing better from here: take back the last flip that isn't about to happen, mark
+                // it as failed there, and look for another way from the shorter plan
+                autoplay.stuck = 0;
+                for (size_t i = rel.size(); i-- > 0;) {
+                    if (rel[i] > st(12)) {
+                        if (c.banned) {
+                            autoplay.banned.insert(at + rel[i]);
+                        }
+                        if (autoplay.reports < 8) {
+                            ++autoplay.reports;
+                            say("autoplay backs up at tick {} ({}): drops the flip at tick {} (plan lasted {} of {})", at,
+                                MODE_NAMES[modeIndex(p1, p2)], at + rel[i], survived, c.horizon);
+                        }
+                        rel.resize(i);
+                        changed = true;
+                        survived = simulatePlan(c, rel);
+                        break;
+                    }
                 }
-                planSearch(c, start, depth, budget, best, bestLen);
             }
-            changed = best != rel;
-            // v3.0 test 15: what the search saw (a few per attempt), to find why a jump isn't found
-            if (autoplay.reports < 6 && (survived < st(45) || changed)) {
-                ++autoplay.reports;
-                double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - autoplay.searchStart).count();
-                std::string flips;
-                for (int t : best) {
-                    flips += fmt::format(" {}", t);
-                }
-                say("autoplay search at tick {} ({}): now {} of {} ticks, best {}{} | {} runs, {:.1f} of {:.1f} ms{}", at,
-                    MODE_NAMES[modeIndex(p1, p2)], survived, c.horizon, bestLen, best.empty() ? " (no input)" : " with flips at" + flips,
-                    autoplay.sims, ms, autoplay.searchCap, planOutOfTime() ? " (out of time)" : "");
-            }
-            rel = best;
-            survived = bestLen;
         }
         buf.fullHorizon = false;
         buf.firstStep = savedStep;
@@ -5047,9 +5080,9 @@ namespace {
             }
         }
         autoplay.planSafeUntil = at + survived;
-        // a working plan is re-checked now and then (moving things can change); one that still
-        // crashes is searched for again a little before the crash, not every tick
-        autoplay.verifyAt = tickCount + (survived >= c.horizon ? st(8) : std::clamp(survived - st(30), st(2), st(16)));
+        // a full plan is re-checked every few ticks; one that's still short keeps being worked on
+        // (within the frame's time)
+        autoplay.verifyAt = tickCount + (survived >= c.horizon ? st(8) : 1);
     }
 
     void tryAutoRelease(PlayLayer* layer, PlayerObject* p1) {
