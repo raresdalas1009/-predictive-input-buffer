@@ -535,8 +535,16 @@ namespace {
             return object->m_objectID == 749;  // touching the orange end does nothing
         }
         auto* t = static_cast<TeleportPortalObject*>(object);
-        if (t->m_staticForceEnabled || t->m_redirectForceEnabled || t->m_gravityMode != 0 || t->m_redirectDash) {
+        if (t->m_staticForceEnabled || t->m_redirectForceEnabled || t->m_redirectDash || t->m_gravityMode < 0 || t->m_gravityMode > 3) {
             return false;
+        }
+        // v3.0 test 46: a teleport that also sets gravity (1 normal, 2 flipped, 3 toggle); the route
+        // stopped at those as "a portal it can't take" (Tidal Wave 14%)
+        if (t->m_gravityMode != 0) {
+            bool want = t->m_gravityMode == 2 ? true : t->m_gravityMode == 1 ? false : !g->m_isUpsideDown;
+            if (want != g->m_isUpsideDown) {
+                g->flipGravity(want, true);
+            }
         }
         double dx = 0.0, dy = t->m_teleportYOffset;
         if (t->m_orangePortal && t->m_orangePortal != t) {
@@ -6387,6 +6395,35 @@ namespace {
         }
     }
 
+    // v3.0 test 46: the route starts again from where you are, keeping its inputs still to come
+    // (they're checked again from here). Used by the re-check and, since test 46, by a drift (test
+    // 45 threw the whole route away on a 5-unit drift, right before a spike, with no time to plan)
+    bool routeRebase(PlayLayer* layer, PlayerObject* p1) {
+            std::vector<int> future;
+            std::vector<RouteGroup> futureGroups;
+            for (int f : route.flips) {
+                if (f >= tickCount) {
+                    future.push_back(f);
+                }
+            }
+            for (auto const& g : route.groups) {
+                if (g.first >= tickCount) {
+                    futureGroups.push_back(g);
+                }
+            }
+            // the button just before this tick's own inputs, as the old route had it
+            bool heldNow = routeHeldAt(tickCount);
+            routeStart(layer, p1);
+            if (!route.active) {
+                return false;
+            }
+            route.originHeld = heldNow;
+            route.cps.front().held = heldNow;
+            route.flips = future;
+            route.groups = futureGroups;
+        return true;
+    }
+
     // a tick of autoplay with the route; false = the route has nothing here (the short planner goes on)
     bool routeTick(PlayLayer* layer, PlayerObject* p1, int at) {
         if (snapAll.empty() || snapOwner != layer) {
@@ -6404,7 +6441,9 @@ namespace {
                         say("route drift at tick {} ({}): you're at {:.0f},{:.0f}, the route said {:.0f},{:.0f}, planning again from you", at,
                             MODE_NAMES[modeIndex(p1, nullptr)], now.x, now.y, want.x, want.y);
                     }
-                    routeReset();
+                    if (!routeRebase(layer, p1)) {
+                        return false;
+                    }
                 }
             }
         }
@@ -6436,28 +6475,9 @@ namespace {
                     say("route re-check at tick {}: it now dies {} ticks ahead, not past {} (something moved): planned again from you", at,
                         lived, length);
                 }
-                std::vector<int> future;
-                std::vector<RouteGroup> futureGroups;
-                for (int f : route.flips) {
-                    if (f >= tickCount) {
-                        future.push_back(f);
-                    }
-                }
-                for (auto const& g : route.groups) {
-                    if (g.first >= tickCount) {
-                        futureGroups.push_back(g);
-                    }
-                }
-                // the button just before this tick's own inputs, as the old route had it
-                bool heldNow = routeHeldAt(tickCount);
-                routeStart(layer, p1);
-                if (!route.active) {
+                if (!routeRebase(layer, p1)) {
                     return false;
                 }
-                route.originHeld = heldNow;
-                route.cps.front().held = heldNow;
-                route.flips = future;
-                route.groups = futureGroups;
                 route.lastRecheck = tickCount;
             }
         }
