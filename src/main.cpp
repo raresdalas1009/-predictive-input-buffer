@@ -5446,8 +5446,11 @@ namespace {
         }
         // stuck at one spot: forget further back each time (0.25 s more per death there), so a
         // different route gets tried sooner
-        int keepUntil = reached - st(60) - autoplay.sameDeaths * st(60);
-        if (keepUntil > autoplay.knownUntil || autoplay.sameDeaths >= 1) {
+        // v3.0 test 43: what you played through alive is kept and replayed exactly next attempt, up to
+        // 3 s before the death (room for the route's combination search there); only dying at the
+        // same spot again and again frees up 1 s more each time (from the 2nd repeat, at most 4)
+        int keepUntil = reached - st(720) - std::min(std::max(autoplay.sameDeaths - 1, 0), 4) * st(240);
+        if (keepUntil > autoplay.knownUntil || autoplay.sameDeaths >= 2) {
             autoplay.knownUntil = std::max(0, keepUntil);
             autoplay.known.clear();
             for (auto const& f : autoplay.attemptFlips) {
@@ -6533,7 +6536,7 @@ namespace {
         // v3.0 test 40: not while the route plans (it replayed the inputs that led into a dead end
         // right up to it, so the route had no room: Stereo Madness 60%, 3 deaths on the same tick).
         // Only a whole level learned to the end is replayed.
-        bool replayOk = autoplay.knowsWholeLevel || layer->m_gameState.m_isDualMode;
+        bool replayOk = true;  // test 43: back on, up to 3 s before the last death (see autoplayDied)
         if (replayOk && !layer->m_isPracticeMode && !autoplay.userTouched && at < autoplay.knownUntil) {
             while (autoplay.replayIdx < autoplay.known.size() && autoplay.known[autoplay.replayIdx].first <= at) {
                 if (autoplay.known[autoplay.replayIdx].first == at) {
@@ -8356,7 +8359,7 @@ class $modify(BufPlayLayer, PlayLayer) {
         if (autoplay.active && !buf.simulating && player == m_player1 && !player->m_isDead && object != m_anticheatSpike &&
             !autoplay.diedThisAttempt) {
             int at = autoplay.attemptTick;
-            bool replaying = !m_isPracticeMode && autoplay.knowsWholeLevel && autoplay.knownUntil > 0 && at <= autoplay.knownUntil;
+            bool replaying = !m_isPracticeMode && autoplay.knownUntil > 0 && at <= autoplay.knownUntil;
             bool expected = autoplay.planSafeUntil > at + 2;
             say("autoplay died at {:.1f}% as {} (tick {}): {}", getCurrentPercent(), MODE_NAMES[modeIndex(m_player1, m_gameState.m_isDualMode ? m_player2 : nullptr)], at,
                 replaying ? "while replaying what it learned (the replay went differently)"
