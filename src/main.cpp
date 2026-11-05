@@ -7049,10 +7049,19 @@ namespace {
         // objects as they are now; if that dies sooner than the route said, the route is planned
         // again from you, keeping its inputs still to come (they're checked again from there)
         // v3.0 test 49: every 6 ticks (was 12), from where you really are, with the path compared too
-        if (route.active && !route.sprinting && !pf.active && tickCount - route.lastRecheck >= st(6) && route.end - tickCount > st(6)) {
+        // v3.0 test 61: also while it looks for a way past a stuck spot further on, or the pathfinder
+        // runs (tests 27-60 stopped checking then, so an object that moved into the path you were
+        // following wasn't seen and you flew into it). Then only a death sooner than the one it
+        // already knows about counts, and the path isn't re-anchored.
+        bool busy = route.sprinting || pf.active;
+        int checkEnd = route.end;
+        if (pf.active) {
+            checkEnd = pf.commits > 0 ? pf.start : std::min(route.end, pf.death);
+        }
+        if (route.active && tickCount - route.lastRecheck >= st(6) && checkEnd - tickCount > st(6)) {
             route.lastRecheck = tickCount;
             RoutePoint here { tickCount, nullptr, buf.appliedInput };
-            int length = std::min(route.end, tickCount + st(240)) - tickCount;
+            int length = std::min(checkEnd, tickCount + st(240)) - tickCount;
             int lived = routeSim(layer, p1, here, route.flips, length, true);
             // the route's path off from where you'll really go (more than 3 units, while both live):
             // the route is put back onto you, keeping its inputs
@@ -7077,7 +7086,7 @@ namespace {
                     break;
                 }
             }
-            if (off && lived >= length && tickCount - route.lastAnchor >= st(60)) {
+            if (off && !busy && lived >= length && tickCount - route.lastAnchor >= st(60)) {
                 route.lastAnchor = tickCount;
                 if (routeRechecks < 16) {
                     ++routeRechecks;
@@ -7106,7 +7115,7 @@ namespace {
             // test 33: one re-check isn't enough unless the death is close (guesses about moving
             // objects wobble, and every replan changed the path you see)
             route.recheckFails = lived < length ? route.recheckFails + 1 : 0;
-            if (lived < length && (lived < st(90) || route.recheckFails >= 2)) {
+            if (lived < length && (lived < st(90) || route.recheckFails >= 2 || (busy && lived < length - st(6)))) {
                 if (routeRechecks < 12) {
                     ++routeRechecks;
                     say("route re-check at tick {}: it now dies {} ticks ahead, not past {} (something moved): planned again from you", at,
