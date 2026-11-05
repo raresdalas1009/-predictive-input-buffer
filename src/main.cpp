@@ -522,23 +522,23 @@ namespace {
         return freeMode;
     }
 
+    // v3.0 test 53: the game snaps the corridor to the block grid (a wave portal at y 268 made the
+    // corridor 90-390: centre 240), and its floor is never below the ground (90). Test 50 centred it
+    // on the portal itself, 28 units too high.
+    void corridorFor(float portalY, float h, float& lo, float& hi) {
+        float c = std::floor(portalY / 30.f) * 30.f;
+        lo = std::max(90.f, c - h * 0.5f);
+        hi = lo + h;
+    }
+
     void ghostBoundsFromPortal(GameObject* portal, GameObjectType t) {
         auto* layer = GameManager::get()->m_playLayer;
         if (!boundedMode(t) || portalIsFree(layer, portal)) {
             buf.gBounds = false;
             return;
         }
-        float h = corridorHeight(layer, t);
-        float c = portal->getPositionY();
-        if (layer) {
-            float lo = layer->getMinPortalY(), hi = layer->getMaxPortalY();
-            if (lo < hi) {
-                c = std::clamp(c, lo, hi);
-            }
-        }
+        corridorFor(portal->getPositionY(), corridorHeight(layer, t), buf.gBoundLo, buf.gBoundHi);
         buf.gBounds = true;
-        buf.gBoundLo = c - h * 0.5f;
-        buf.gBoundHi = c + h * 0.5f;
     }
 
     // the corridor you're in for real right now
@@ -548,13 +548,13 @@ namespace {
             return;
         }
         auto t = portalTypeOf(p);
-        if (!boundedMode(t) || portalIsFree(layer, layer->m_gameState.m_lastActivatedPortal1) || layer->m_gameState.m_portalY <= 0.f) {
+        auto* portal = layer->m_gameState.m_lastActivatedPortal1;
+        if (!boundedMode(t) || !portal || portalIsFree(layer, portal)) {
             return;
         }
-        float h = corridorHeight(layer, t);
+        // test 53: from the last portal you took (m_portalY read 0 in the game's own state)
+        corridorFor(portal->getPositionY(), corridorHeight(layer, t), lo, hi);
         has = true;
-        lo = layer->m_gameState.m_portalY - h * 0.5f;
-        hi = layer->m_gameState.m_portalY + h * 0.5f;
     }
 
     bool ghostTakePortal(PlayerObject* g, GameObject* portal) {
@@ -2683,6 +2683,13 @@ namespace {
         buf.postCollisionSeen = false;
         layer->checkCollisions(ghost, dt, false);
         buf.inCheck = false;
+        if (buf.simulating && buf.gBounds && !buf.ghostDied && ghost->m_isDart) {
+            // test 53: the wave dies on the corridor's floor / ceiling (your "object 0" deaths)
+            auto r = ghost->getObjectRect();
+            if (r.getMaxY() >= buf.gBoundHi || r.getMinY() <= buf.gBoundLo) {
+                buf.ghostDied = true;
+            }
+        }
         if (buf.offscreenFill && !buf.postCollisionSeen && !buf.objIndex.empty() && !buf.ghostDied) {
             // test 33: GD didn't call postCollision in this check: the far objects go in after it
             auto before = buf.offscreenAdded;
@@ -10047,10 +10054,11 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
         // v3.0 test 50: the corridor the game really made, next to the ghost's guess (export)
         if (autoplay.active && object && buf.portalLogs < 12 && boundedMode(object->m_objectType)) {
             ++buf.portalLogs;
-            say("portal check: {} portal at y {:.0f}: game corridor centre {:.0f} (min {:.0f} max {:.0f}, free {}), game height {:.0f}, ghost uses {:.0f}",
-                static_cast<int>(object->m_objectType), object->getPositionY(), m_gameState.m_portalY, getMinPortalY(), getMaxPortalY(),
-                portalIsFree(this, object), getGroundHeightForMode(static_cast<int>(object->m_objectType)),
-                corridorHeight(this, object->m_objectType));
+            float lo = 0.f, hi = 0.f;
+            corridorFor(object->getPositionY(), corridorHeight(this, object->m_objectType), lo, hi);
+            say("portal check: {} portal at y {:.0f}: game corridor {:.0f}-{:.0f} (free {}), ghost corridor {:.0f}-{:.0f}",
+                static_cast<int>(object->m_objectType), object->getPositionY(), getMinPortalY(), getMaxPortalY(), portalIsFree(this, object), lo,
+                hi);
         }
     }
 };
