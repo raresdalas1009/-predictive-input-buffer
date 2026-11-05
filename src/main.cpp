@@ -5712,8 +5712,10 @@ namespace {
         routeSimStart = from.tick;
         if (record) {
             buf.recordPath = &routeRec;
-            buf.cpEvery = routeCpEvery();
-            buf.cpSink = &routeCpSink;
+            if (from.snap) {
+                buf.cpEvery = routeCpEvery();
+                buf.cpSink = &routeCpSink;
+            }
         }
         buf.yBand = from.snap && (from.snap->m_isDart || from.snap->m_isShip) && from.tick > route.bandOffUntil;
         if (buf.yBand) {
@@ -6363,7 +6365,7 @@ namespace {
 
     void routeDraw(PlayerObject* p1) {
         auto* d = autoplay.trailNode;
-        if (!d || (!route.changed && tickCount - route.drawnAt < st(24))) {
+        if (!d || (!route.changed && tickCount - route.drawnAt < st(6))) {  // test 49: redrawn ~40x a second
             return;
         }
         route.changed = false;
@@ -6461,11 +6463,35 @@ namespace {
         // moving). Every 0.05 s the next 1.25 s of the route are played again from you, with the
         // objects as they are now; if that dies sooner than the route said, the route is planned
         // again from you, keeping its inputs still to come (they're checked again from there)
-        if (route.active && !route.sprinting && tickCount - route.lastRecheck >= st(12) && route.end - tickCount > st(6)) {
+        // v3.0 test 49: every 6 ticks (was 12), from where you really are, with the path compared too
+        if (route.active && !route.sprinting && tickCount - route.lastRecheck >= st(6) && route.end - tickCount > st(6)) {
             route.lastRecheck = tickCount;
             RoutePoint here { tickCount, nullptr, buf.appliedInput };
-            int length = std::min(route.end, tickCount + st(300)) - tickCount;
-            int lived = routeSim(layer, p1, here, route.flips, length, false);
+            int length = std::min(route.end, tickCount + st(240)) - tickCount;
+            int lived = routeSim(layer, p1, here, route.flips, length, true);
+            // the route's path off from where you'll really go (more than 3 units, while both live):
+            // the route is put back onto you, keeping its inputs
+            bool off = false;
+            for (int k = 0; k < static_cast<int>(routeRec.size()) && k < lived; k += 2) {
+                int i = tickCount + k - route.posBase;
+                if (i < 0 || i >= static_cast<int>(route.pos.size())) {
+                    break;
+                }
+                if (std::abs(routeRec[k].x - route.pos[i].x) > 3.f || std::abs(routeRec[k].y - route.pos[i].y) > 3.f) {
+                    off = true;
+                    break;
+                }
+            }
+            if (off && lived >= length) {
+                if (routeRechecks < 12) {
+                    ++routeRechecks;
+                    say("route re-anchored on you at tick {} (its path had drifted from yours)", at);
+                }
+                if (!routeRebase(layer, p1)) {
+                    return false;
+                }
+                route.lastRecheck = tickCount;
+            }
             // test 33: one re-check isn't enough unless the death is close (guesses about moving
             // objects wobble, and every replan changed the path you see)
             route.recheckFails = lived < length ? route.recheckFails + 1 : 0;
