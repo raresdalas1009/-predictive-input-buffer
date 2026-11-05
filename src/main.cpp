@@ -9824,7 +9824,11 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
                         player->togglePlayerScale(mini, true);
                     }
                 }
-                else {
+                else if (player->m_playerSpeed != speed) {
+                    // v3.0 test 52: the game's own speed change (no effects), not just the speed
+                    // number: with only the number, the ghost after a speed portal moved at a slightly
+                    // wrong speed and the route fell behind you
+                    player->updateTimeMod(speed, true);
                     player->m_playerSpeed = speed;
                 }
             }
