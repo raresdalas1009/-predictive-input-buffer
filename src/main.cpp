@@ -4945,6 +4945,11 @@ namespace {
         std::vector<CCPoint> knownTrail;
         bool knowsWholeLevel = false;
         std::vector<int> deathTicks;  // where this session's attempts ended (learning backs off at repeats)
+        // v3.0 test 51: the attempt that got furthest; the next one replays it to just before its end
+        int bestReached = -1;
+        std::vector<std::pair<int, bool>> bestFlips;
+        std::vector<CCPoint> bestTrail;
+        float startX = -2.f;  // the start position the learning is for
         std::string saveKey;
         size_t levelHash = 0;
         CCDrawNode* trailNode = nullptr;
@@ -5524,6 +5529,21 @@ namespace {
 
     // a new attempt: the learned inputs are replayed from the start again
     void autoplayAttemptStart(PlayLayer* layer) {
+        // v3.0 test 51: another start position: what was learned counts ticks from the old one
+        float sx = layer->m_startPosObject ? layer->m_startPosObject->getPositionX() : -1.f;
+        if (autoplay.startX > -1.5f && std::abs(sx - autoplay.startX) > 1.f) {
+            autoplay.known.clear();
+            autoplay.knownTrail.clear();
+            autoplay.knownUntil = 0;
+            autoplay.knowsWholeLevel = false;
+            autoplay.bestReached = -1;
+            autoplay.bestFlips.clear();
+            autoplay.bestTrail.clear();
+            autoplay.deathTicks.clear();
+            autoplay.banned.clear();
+            say("autoplay: another start position, it learns from here");
+        }
+        autoplay.startX = sx;
         // normal mode: always start let go, so the learned inputs replay the same. Practice: a
         // checkpoint can put you mid-flight (ship), where letting go means crashing at once, so
         // autoplay plans from however you respawn (v3.0 test 13)
@@ -5573,27 +5593,35 @@ namespace {
                 break;
             }
         }
-        // stuck at one spot: forget further back each time (0.25 s more per death there), so a
-        // different route gets tried sooner
-        // v3.0 test 43: what you played through alive is kept and replayed exactly next attempt, up to
-        // 3 s before the death (room for the route's combination search there); only dying at the
-        // same spot again and again frees up 1 s more each time (from the 2nd repeat, at most 4)
-        int keepUntil = reached - st(720) - std::min(std::max(autoplay.sameDeaths - 1, 0), 4) * st(240);
-        if (keepUntil > autoplay.knownUntil || autoplay.sameDeaths >= 2) {
-            autoplay.knownUntil = std::max(0, keepUntil);
-            autoplay.known.clear();
-            for (auto const& f : autoplay.attemptFlips) {
-                if (f.first < autoplay.knownUntil) {
-                    autoplay.known.push_back(f);
-                }
-            }
-            autoplay.knownTrail.clear();
-            for (size_t i = 0; i < autoplay.attemptTrail.size() && static_cast<int>(i) * trailEvery() < autoplay.knownUntil; ++i) {
-                autoplay.knownTrail.push_back(autoplay.attemptTrail[i]);
-            }
-            say("autoplay remembers {} inputs ({} ticks of this level)", autoplay.known.size(), autoplay.knownUntil);
-            drawTrail();
+        // v3.0 test 51: the best attempt so far is what gets replayed (an attempt that dies sooner
+        // doesn't replace it), up to 0.5 s before where it ended; each death there frees 1 s more
+        // (at most 6). Test 43 kept 3 s for the search, and the search came out differently every
+        // time: a route that had worked wasn't followed again and it died sooner.
+        if (reached > autoplay.bestReached) {
+            autoplay.bestReached = reached;
+            autoplay.bestFlips = autoplay.attemptFlips;
+            autoplay.bestTrail = autoplay.attemptTrail;
         }
+        int atBest = 0;
+        for (int d : autoplay.deathTicks) {
+            if (std::abs(d - autoplay.bestReached) < st(45)) {
+                ++atBest;
+            }
+        }
+        int keepUntil = std::max(0, autoplay.bestReached - st(120) - std::min(std::max(atBest - 1, 0), 6) * st(240));
+        autoplay.knownUntil = keepUntil;
+        autoplay.known.clear();
+        for (auto const& f : autoplay.bestFlips) {
+            if (f.first < keepUntil) {
+                autoplay.known.push_back(f);
+            }
+        }
+        autoplay.knownTrail.clear();
+        for (size_t i = 0; i < autoplay.bestTrail.size() && static_cast<int>(i) * trailEvery() < keepUntil; ++i) {
+            autoplay.knownTrail.push_back(autoplay.bestTrail[i]);
+        }
+        say("autoplay replays its best attempt ({} ticks) up to tick {} ({} inputs)", autoplay.bestReached, keepUntil, autoplay.known.size());
+        drawTrail();
         saveAutoplay();
     }
 
