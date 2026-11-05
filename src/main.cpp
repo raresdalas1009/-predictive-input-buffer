@@ -5086,7 +5086,8 @@ namespace {
             }
             else if (kind == "d") {
                 float x = 0.f, y = 0.f, w = 0.f, h = 0.f;
-                if (in >> x >> y >> w >> h) {
+                // test 60: test 59's big marks (what killed you, grown) are left out when loaded
+                if ((in >> x >> y >> w >> h) && w <= 30.f && h <= 30.f) {
                     buf.autoDangers.push_back(CCRect(x, y, w, h));
                 }
             }
@@ -9072,33 +9073,10 @@ class $modify(BufPlayLayer, PlayLayer) {
             if (expected && !replaying) {
                 auto r = player->getObjectRect();
                 float w = r.size.width * 0.6f, h = r.size.height * 0.6f;
-                CCRect mark(r.getMidX() - w / 2.f, r.getMidY() - h / 2.f, w, h);
-                // v3.0 test 59: the ghost's path can be 10-20 units off yours there, so a mark only
-                // where you died was flown past by the ghost and you died at the same spot again.
-                // Now the thing that killed you is marked too, and a spot you die at again grows
-                // (8 units each side, every time)
-                if (object && object != m_anticheatSpike) {
-                    auto o = object->getObjectRect();
-                    if (o.size.width > 0.f && o.size.width < 200.f && o.size.height > 0.f && o.size.height < 200.f) {
-                        mark = CCRect(std::min(mark.getMinX(), o.getMinX() - 3.f), std::min(mark.getMinY(), o.getMinY() - 3.f), 0.f, 0.f);
-                        float x1 = std::max(r.getMidX() + w / 2.f, o.getMaxX() + 3.f);
-                        float y1 = std::max(r.getMidY() + h / 2.f, o.getMaxY() + 3.f);
-                        mark.size = CCSize(x1 - mark.origin.x, y1 - mark.origin.y);
-                    }
-                }
-                bool grown = false;
-                for (auto& d : buf.autoDangers) {
-                    if (d.intersectsRect(mark) && d.size.width < 120.f) {
-                        float x0 = std::min(d.getMinX(), mark.getMinX()) - 8.f, y0 = std::min(d.getMinY(), mark.getMinY()) - 8.f;
-                        float x1 = std::max(d.getMaxX(), mark.getMaxX()) + 8.f, y1 = std::max(d.getMaxY(), mark.getMaxY()) + 8.f;
-                        d = CCRect(x0, y0, x1 - x0, y1 - y0);
-                        grown = true;
-                        break;
-                    }
-                }
-                if (!grown) {
-                    buf.autoDangers.push_back(mark);
-                }
+                // (test 59 also marked what killed you and grew a spot you died at again: in
+                // Aquamarine's 48% wave two grown marks closed the gap between them, and every route
+                // there was "stuck". Test 60: back to the spot where you died only)
+                buf.autoDangers.push_back(CCRect(r.getMidX() - w / 2.f, r.getMidY() - h / 2.f, w, h));
                 say("  the ghost didn't see this: the spot is marked, autoplay keeps out of it ({} marked)", buf.autoDangers.size());
             }
             autoplay.diedThisAttempt = true;
