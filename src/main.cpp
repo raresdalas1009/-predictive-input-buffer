@@ -5582,13 +5582,7 @@ namespace {
         buf.offscreenAdded = 0;
         buf.offscreenFallback = 0;
     }
-    // v3.0 test 47: the route goes to the end of the level: saved states every 0.2 s for the first
-    // 10 s, then one a second (so a 2 minute level needs ~160)
-#ifdef GEODE_IS_MOBILE
-    constexpr int SNAP_MAX = 120;
-#else
-    constexpr int SNAP_MAX = 200;
-#endif
+    constexpr int SNAP_MAX = 48;
     std::vector<PlayerObject*> snapFree;
     std::vector<PlayerObject*> snapAll;
     CCLayer* snapLayer = nullptr;
@@ -5676,20 +5670,12 @@ namespace {
         if (route.cps.size() + routeNewCps.size() >= static_cast<size_t>(SNAP_MAX) - 2) {
             return;
         }
-        int tick = routeSimStart + rel;
-        if (tick - tickCount > st(2400)) {
-            // far ahead: one saved state a second
-            int prev = !routeNewCps.empty() ? routeNewCps.back().tick : !route.cps.empty() ? route.cps.back().tick : INT_MIN;
-            if (tick - prev < st(240)) {
-                return;
-            }
-        }
         auto* s = takeSnap();
         if (!s) {
             return;
         }
         copyState(s, ghost);
-        routeNewCps.push_back({ tick, s, held });
+        routeNewCps.push_back({ routeSimStart + rel, s, held });
     }
 
     int routeCpEvery() {
@@ -6313,11 +6299,7 @@ namespace {
             return false;
         }
         auto from = route.cps.back();
-        // v3.0 test 47: to the end of the level (it was 10 s ahead)
-        if (from.snap->getPositionX() > layer->m_levelLength + 60.f) {
-            return false;
-        }
-        int length = std::min(st(240), tickCount + st(240 * 600) - from.tick);
+        int length = std::min(st(240), tickCount + st(2400) - from.tick);
         if (length < st(12)) {
             return false;
         }
@@ -6390,7 +6372,7 @@ namespace {
         int from = std::max(0, tickCount - route.posBase);
         CCPoint prev = p1->getPosition();
         int step = std::max(1, st(4));
-        for (int k = from; k < static_cast<int>(route.pos.size()); k += (k - from > st(2400) ? step * 3 : step)) {
+        for (int k = from; k < static_cast<int>(route.pos.size()); k += step) {
             auto const& pt = route.pos[k];
             if (std::abs(pt.x - prev.x) < 150.f && std::abs(pt.y - prev.y) < 150.f) {
                 d->drawSegment(prev, pt, 1.2f, { 0.35f, 1.f, 0.65f, 1.f });
