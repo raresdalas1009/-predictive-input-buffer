@@ -7061,7 +7061,7 @@ namespace {
         if (route.active && tickCount - route.lastRecheck >= st(6) && checkEnd - tickCount > st(6)) {
             route.lastRecheck = tickCount;
             RoutePoint here { tickCount, nullptr, buf.appliedInput };
-            int length = std::min(checkEnd, tickCount + st(240)) - tickCount;
+            int length = std::min(checkEnd, tickCount + st(480)) - tickCount;  // test 62: 2 s ahead (was 1 s)
             int lived = routeSim(layer, p1, here, route.flips, length, true);
             // the route's path off from where you'll really go (more than 3 units, while both live):
             // the route is put back onto you, keeping its inputs
