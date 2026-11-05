@@ -5705,6 +5705,7 @@ namespace {
         bool fine = false;  // test 28: the search goes a few ticks at a time first, then tick by tick
         int candStart = 0;
         int lastRecheck = -1000;
+        int lastAnchor = -100000;  // test 56
         int recheckFails = 0;  // test 33: re-checks in a row that died sooner than the route
         int beforeLimit = INT_MAX;  // test 32: after a take-back, the next search looks before it
         int bandOffUntil = INT_MIN;  // test 45: the band is off for tests starting before this tick
@@ -6657,21 +6658,47 @@ namespace {
             int lived = routeSim(layer, p1, here, route.flips, length, true);
             // the route's path off from where you'll really go (more than 3 units, while both live):
             // the route is put back onto you, keeping its inputs
+            // v3.0 test 56: the route was planned far ahead, where the ghost sees some parts slightly
+            // differently (Aquamarine's ship parts: 10 units off at the same spots every time, also
+            // without Click Between Frames). Seen from near you it's right, so when the next second
+            // seen from you leaves the route by more than 4 units, the route is put back onto you
+            // now (~1 s before the spot), keeping its inputs; at most every 0.25 s
             bool off = false;
+            CCPoint offAt {};
+            float offBy = 0.f;
             for (int k = 0; k < static_cast<int>(routeRec.size()) && k < lived; k += 2) {
                 int i = tickCount + k - route.posBase;
                 if (i < 0 || i >= static_cast<int>(route.pos.size())) {
                     break;
                 }
-                if (std::abs(routeRec[k].x - route.pos[i].x) > 3.f || std::abs(routeRec[k].y - route.pos[i].y) > 3.f) {
+                float d = std::max(std::abs(routeRec[k].x - route.pos[i].x), std::abs(routeRec[k].y - route.pos[i].y));
+                if (d > 4.f) {
                     off = true;
+                    offAt = route.pos[i];
+                    offBy = d;
                     break;
                 }
             }
-            if (false && off && lived >= length) {  // test 54: off (the re-check below catches what matters)
-                if (routeRechecks < 12) {
+            if (off && lived >= length && tickCount - route.lastAnchor >= st(60)) {
+                route.lastAnchor = tickCount;
+                if (routeRechecks < 16) {
                     ++routeRechecks;
-                    say("route re-anchored on you at tick {} (its path had drifted from yours)", at);
+                    int slopes = 0;
+                    int b = static_cast<int>(std::floor(offAt.x / 64.f));
+                    for (int kk = b - 2; kk <= b + 2; ++kk) {
+                        auto it = buf.objIndex.find(kk);
+                        if (it == buf.objIndex.end()) {
+                            continue;
+                        }
+                        for (auto* o : it->second) {
+                            if (o->m_objectType == GameObjectType::Slope && std::abs(o->m_positionX - offAt.x) < 90.f &&
+                                std::abs(o->m_positionY - offAt.y) < 90.f) {
+                                ++slopes;
+                            }
+                        }
+                    }
+                    say("route re-anchored on you at tick {}: {:.0f} units off ahead at x {:.0f} y {:.0f} ({} slopes near it), inputs kept", at,
+                        offBy, offAt.x, offAt.y, slopes);
                 }
                 if (!routeRebase(layer, p1)) {
                     return false;
