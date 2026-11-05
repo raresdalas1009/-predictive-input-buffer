@@ -5739,6 +5739,9 @@ namespace {
     PlayLayer* snapOwner = nullptr;
 
     // the saved states are hidden players of their own, made once per level when autoplay starts
+    // test 57: the pathfinder's own pool of saved states
+    constexpr int PF_SNAPS = 64;
+    std::vector<PlayerObject*> pfFree;
     void makeSnaps(PlayLayer* layer) {
         if (snapOwner != layer) {
             pfFree.clear();
@@ -5788,8 +5791,6 @@ namespace {
     }
 
     // test 57: the pathfinder's own saved states (kept apart from the route's)
-    constexpr int PF_SNAPS = 64;
-    std::vector<PlayerObject*> pfFree;
     bool pfActive = false;
     int pfStepLen = 0;
     PlayerObject* pfOut = nullptr;
