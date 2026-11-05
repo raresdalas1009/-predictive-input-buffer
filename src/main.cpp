@@ -330,6 +330,14 @@ namespace {
         // v3.0 test 45: wave / ship routes stay in a band around where the stretch starts (leaving it
         // counts as a death in the route's tests), so the route flies steadily instead of to the
         // top and bottom of every corridor
+        // v3.0 test 50: the floor / ceiling a mode portal puts around you (ship, UFO, wave, swing,
+        // ball, spider), for the route's ghost: two invisible solid slabs it collides with
+        bool gBounds = false;
+        float gBoundLo = 0.f, gBoundHi = 0.f;
+        bool simFromBounds = false;
+        float simFromLo = 0.f, simFromHi = 0.f;
+        GameObject* boundSlabs[2] = { nullptr, nullptr };
+        int portalLogs = 0;
         bool yBand = false;
         float yBandCenter = 0.f;
         float yBandHalf = 0.f;
@@ -480,7 +488,77 @@ namespace {
     // isn't set, so a ship or wave right after a portal is predicted without those bounds.
     // Dual portals still stop the prediction (v2.84: teleport and solo portals are taken, see
     // ghostTeleport). Returns false for those.
-    bool ghostTakePortal(PlayerObject* g, GameObjectType type) {
+    bool boundedMode(GameObjectType t) {
+        return t == GameObjectType::ShipPortal || t == GameObjectType::UfoPortal || t == GameObjectType::WavePortal ||
+            t == GameObjectType::SwingPortal || t == GameObjectType::BallPortal || t == GameObjectType::SpiderPortal;
+    }
+
+    GameObjectType portalTypeOf(PlayerObject* p) {
+        if (p->m_isShip) return GameObjectType::ShipPortal;
+        if (p->m_isBird) return GameObjectType::UfoPortal;
+        if (p->m_isDart) return GameObjectType::WavePortal;
+        if (p->m_isSwing) return GameObjectType::SwingPortal;
+        if (p->m_isBall) return GameObjectType::BallPortal;
+        if (p->m_isSpider) return GameObjectType::SpiderPortal;
+        if (p->m_isRobot) return GameObjectType::RobotPortal;
+        return GameObjectType::CubePortal;
+    }
+
+    // the corridor's height: the game's own number when it gives a sensible one, else 10 blocks
+    // (8 for ball and spider)
+    float corridorHeight(GJBaseGameLayer* layer, GameObjectType t) {
+        float h = layer ? layer->getGroundHeightForMode(static_cast<int>(t)) : 0.f;
+        if (h > 120.f && h < 600.f) {
+            return h;
+        }
+        return (t == GameObjectType::BallPortal || t == GameObjectType::SpiderPortal) ? 240.f : 300.f;
+    }
+
+    bool portalIsFree(GJBaseGameLayer* layer, GameObject* portal) {
+        bool freeMode = layer && layer->m_gameState.m_isFreeMode;
+        if (auto* e = typeinfo_cast<EffectGameObject*>(portal)) {
+            freeMode = freeMode || e->m_cameraIsFreeMode;
+        }
+        return freeMode;
+    }
+
+    void ghostBoundsFromPortal(GameObject* portal, GameObjectType t) {
+        auto* layer = GameManager::get()->m_playLayer;
+        if (!boundedMode(t) || portalIsFree(layer, portal)) {
+            buf.gBounds = false;
+            return;
+        }
+        float h = corridorHeight(layer, t);
+        float c = portal->getPositionY();
+        if (layer) {
+            float lo = layer->getMinPortalY(), hi = layer->getMaxPortalY();
+            if (lo < hi) {
+                c = std::clamp(c, lo, hi);
+            }
+        }
+        buf.gBounds = true;
+        buf.gBoundLo = c - h * 0.5f;
+        buf.gBoundHi = c + h * 0.5f;
+    }
+
+    // the corridor you're in for real right now
+    void realBounds(PlayLayer* layer, PlayerObject* p, bool& has, float& lo, float& hi) {
+        has = false;
+        if (!layer || !p) {
+            return;
+        }
+        auto t = portalTypeOf(p);
+        if (!boundedMode(t) || portalIsFree(layer, layer->m_gameState.m_lastActivatedPortal1) || layer->m_gameState.m_portalY <= 0.f) {
+            return;
+        }
+        float h = corridorHeight(layer, t);
+        has = true;
+        lo = layer->m_gameState.m_portalY - h * 0.5f;
+        hi = layer->m_gameState.m_portalY + h * 0.5f;
+    }
+
+    bool ghostTakePortal(PlayerObject* g, GameObject* portal) {
+        GameObjectType type = portal->m_objectType;
         switch (type) {
             case GameObjectType::CubePortal:
             case GameObjectType::ShipPortal:
@@ -500,6 +578,7 @@ namespace {
             (type == GameObjectType::SwingPortal && g->m_isSwing) ||
             (type == GameObjectType::CubePortal && !g->m_isShip && !g->m_isBird && !g->m_isBall && !g->m_isDart && !g->m_isRobot &&
                 !g->m_isSpider && !g->m_isSwing);
+        ghostBoundsFromPortal(portal, type);  // test 50 (a portal of the mode you're in sets it again)
         if (already) {
             return true;
         }
@@ -2567,6 +2646,27 @@ namespace {
                 }
             }
         }
+        if (buf.gBounds) {
+            // test 50: the corridor's floor and ceiling, under / over the ghost
+            for (int i = 0; i < 2; ++i) {
+                auto*& slab = buf.boundSlabs[i];
+                if (!slab) {
+                    slab = GameObject::createWithKey(1);
+                    if (!slab) {
+                        continue;
+                    }
+                    slab->retain();
+                    slab->setScaleX(40.f);
+                }
+                float y = i == 0 ? buf.gBoundLo - 15.f : buf.gBoundHi + 15.f;
+                slab->setPosition({ pos.x, y });
+                slab->m_positionX = pos.x;
+                slab->m_positionY = y;
+                slab->setObjectRectDirty(true);
+                slab->m_isOrientedBoxDirty = true;
+                extra.push_back(slab);
+            }
+        }
         if (!extra.empty()) {
             buf.offscreenAdded += static_cast<long long>(extra.size());
             layer->collisionCheckObjects(ghost, &extra, static_cast<int>(extra.size()), dt);
@@ -2659,6 +2759,17 @@ namespace {
         }
         buf.held1 = buf.held2 = buf.simFrom ? buf.simFromHeld : buf.appliedInput;
         int off = buf.simFrom ? buf.simOffset : 0;
+        buf.gBounds = false;
+        if (buf.offscreenFill) {
+            if (buf.simFrom) {
+                buf.gBounds = buf.simFromBounds;
+                buf.gBoundLo = buf.simFromLo;
+                buf.gBoundHi = buf.simFromHi;
+            }
+            else {
+                realBounds(layer, p1, buf.gBounds, buf.gBoundLo, buf.gBoundHi);
+            }
+        }
         buf.auto1 = buf.auto2 = false;
         buf.autoAt1 = buf.autoAt2 = -1;
 
@@ -5515,6 +5626,8 @@ namespace {
         int tick;  // the state at the start of this tick (before its inputs)
         PlayerObject* snap;
         bool held;
+        bool hasBounds = false;  // test 50: the corridor the ghost was in there
+        float lo = 0.f, hi = 0.f;
     };
     struct RouteGroup {
         int first;
@@ -5574,6 +5687,7 @@ namespace {
     std::map<int, int> routeStuckSpots;
     void routeCountersReset() {
         routeStuckSpots.clear();
+        buf.portalLogs = 0;
         routeReports = 0;
         routeDrifts = 0;
         routeRechecks = 0;
@@ -5675,7 +5789,7 @@ namespace {
             return;
         }
         copyState(s, ghost);
-        routeNewCps.push_back({ routeSimStart + rel, s, held });
+        routeNewCps.push_back({ routeSimStart + rel, s, held, buf.gBounds, buf.gBoundLo, buf.gBoundHi });
     }
 
     int routeCpEvery() {
@@ -5696,6 +5810,9 @@ namespace {
         buf.fullHorizon = true;
         buf.simFrom = from.snap;
         buf.simFromHeld = from.held;
+        buf.simFromBounds = from.hasBounds;
+        buf.simFromLo = from.lo;
+        buf.simFromHi = from.hi;
         buf.simOffset = from.tick - tickCount;
         buf.crossPos = &route.pos;
         buf.crossBase = route.posBase - tickCount;
@@ -5775,7 +5892,9 @@ namespace {
         route.active = true;
         route.origin = tickCount;
         route.originHeld = buf.appliedInput;
-        route.cps.push_back({ tickCount, s, buf.appliedInput });
+        RoutePoint cp0 { tickCount, s, buf.appliedInput };
+        realBounds(layer, p1, cp0.hasBounds, cp0.lo, cp0.hi);
+        route.cps.push_back(cp0);
         route.posBase = tickCount;
         route.end = tickCount;
         route.frontier = tickCount;
@@ -9664,7 +9783,7 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
                     // v2.79: mode portals ahead are taken by the ghost (once per run)
                     // v2.84: teleport and solo portals too
                     if (buf.portalPredict && isGhost(player) &&
-                        (ghostTakePortal(player, object->m_objectType) || ghostTeleport(player, object) || ghostSoloPortal(object) ||
+                        (ghostTakePortal(player, object) || ghostTeleport(player, object) || ghostSoloPortal(object) ||
                             ghostDualPortal(player, object))) {
                         buf.harmless.insert(object);
                         continue;
@@ -9893,5 +10012,13 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
             return;
         }
         GJBaseGameLayer::playerWillSwitchMode(player, object);
+        // v3.0 test 50: the corridor the game really made, next to the ghost's guess (export)
+        if (autoplay.active && object && buf.portalLogs < 12 && boundedMode(object->m_objectType)) {
+            ++buf.portalLogs;
+            say("portal check: {} portal at y {:.0f}: game corridor centre {:.0f} (min {:.0f} max {:.0f}, free {}), game height {:.0f}, ghost uses {:.0f}",
+                static_cast<int>(object->m_objectType), object->getPositionY(), m_gameState.m_portalY, getMinPortalY(), getMaxPortalY(),
+                portalIsFree(this, object), getGroundHeightForMode(static_cast<int>(object->m_objectType)),
+                corridorHeight(this, object->m_objectType));
+        }
     }
 };
