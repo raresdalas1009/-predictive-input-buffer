@@ -5741,6 +5741,7 @@ namespace {
     // the saved states are hidden players of their own, made once per level when autoplay starts
     void makeSnaps(PlayLayer* layer) {
         if (snapOwner != layer) {
+            pfFree.clear();
             snapFree.clear();  // another level's: let go of in onQuit (or left, see dropSnaps)
             snapAll.clear();
             snapLayer = nullptr;
@@ -5750,13 +5751,18 @@ namespace {
             snapLayer = CCLayer::create();
             snapLayer->retain();
         }
-        while (snapAll.size() < static_cast<size_t>(SNAP_MAX)) {
+        while (snapAll.size() < static_cast<size_t>(SNAP_MAX + PF_SNAPS)) {
             auto* s = PlayerObject::create(1, 1, layer, snapLayer, true);
             s->retain();
             s->setVisible(false);
             snapLayer->addChild(s);
             snapAll.push_back(s);
-            snapFree.push_back(s);
+            if (snapFree.size() < static_cast<size_t>(SNAP_MAX)) {
+                snapFree.push_back(s);
+            }
+            else {
+                pfFree.push_back(s);
+            }
         }
     }
 
@@ -5776,8 +5782,32 @@ namespace {
         }
         snapAll.clear();
         snapFree.clear();
+        pfFree.clear();
         snapLayer = nullptr;
         snapOwner = nullptr;
+    }
+
+    // test 57: the pathfinder's own saved states (kept apart from the route's)
+    constexpr int PF_SNAPS = 64;
+    std::vector<PlayerObject*> pfFree;
+    bool pfActive = false;
+    int pfStepLen = 0;
+    PlayerObject* pfOut = nullptr;
+    bool pfOutHeld = false;
+    bool pfOutB = false;
+    float pfOutLo = 0.f, pfOutHi = 0.f;
+
+    void pfSink(int rel, PlayerObject* ghost, bool held) {
+        if (rel != pfStepLen || pfOut || pfFree.empty()) {
+            return;
+        }
+        pfOut = pfFree.back();
+        pfFree.pop_back();
+        copyState(pfOut, ghost);
+        pfOutHeld = held;
+        pfOutB = buf.gBounds;
+        pfOutLo = buf.gBoundLo;
+        pfOutHi = buf.gBoundHi;
     }
 
     PlayerObject* takeSnap() {
@@ -5790,12 +5820,14 @@ namespace {
     }
 
     void beamReset();
+    void pfReset();
     void routeReset() {
         for (auto& c : route.cps) {
             snapFree.push_back(c.snap);
         }
         route = {};
         beamReset();
+        pfReset();
     }
 
     void routeKeepCps(int upTo) {
@@ -5866,8 +5898,8 @@ namespace {
         if (record) {
             buf.recordPath = &routeRec;
             if (from.snap) {
-                buf.cpEvery = routeCpEvery();
-                buf.cpSink = &routeCpSink;
+                buf.cpEvery = pfActive ? pfStepLen : routeCpEvery();
+                buf.cpSink = pfActive ? &pfSink : &routeCpSink;
             }
         }
         buf.yBand = from.snap && (from.snap->m_isDart || from.snap->m_isShip) && from.tick > route.bandOffUntil;
@@ -6306,10 +6338,227 @@ namespace {
         }
     }
 
+    // ===== v3.0 test 57: the pathfinder (wave / ship) =====
+    // When the route is stuck in wave or ship, many paths are followed side by side from ~3 s before
+    // the death: every step (6 ticks) each path either keeps the button or flips it, and its hidden
+    // player's state is saved at the end of the step, so a step costs 6 ticks of simulation. Up to
+    // 20 living paths at different heights go on; the first that gets well past the death becomes
+    // the route (inputs before the start are kept as they were).
+    struct PfNode {
+        PlayerObject* snap = nullptr;
+        bool held = false;
+        int tick = 0;
+        std::vector<int> flips;
+        bool hasB = false;
+        float lo = 0.f, hi = 0.f;
+        float y = 0.f;
+    };
+    struct Pathfinder {
+        bool active = false;
+        int start = 0;
+        int death = 0;
+        int target = 0;
+        float startY = 0.f;
+        std::vector<int> base;
+        std::vector<PfNode> frontier;
+        std::vector<PfNode> next;
+        size_t idx = 0;
+        int variant = 0;
+        int tests = 0;
+        int steps = 0;
+        int triedFor = INT_MIN;
+    };
+    Pathfinder pf;
+
+    void pfGive(PfNode& n) {
+        if (n.snap) {
+            pfFree.push_back(n.snap);
+            n.snap = nullptr;
+        }
+    }
+
+    void pfReset() {
+        for (auto& n : pf.frontier) {
+            pfGive(n);
+        }
+        for (auto& n : pf.next) {
+            pfGive(n);
+        }
+        int tried = pf.triedFor;
+        pf = {};
+        pf.triedFor = tried;
+    }
+
+    bool pfStart(PlayLayer* layer, PlayerObject* p1) {
+        if (route.cps.empty() || std::abs(pf.triedFor - route.death) < st(30) || pfFree.size() < 8) {
+            return false;
+        }
+        auto const& dcp = routeCpAtOrBefore(route.death);
+        if (!(dcp.snap->m_isDart || dcp.snap->m_isShip)) {
+            return false;  // cube-like parts keep the jump search
+        }
+        pfReset();
+        pf.triedFor = route.death;
+        auto const& cp = routeCpAtOrBefore(std::max(route.death - st(720), tickCount + 2));
+        auto* s = pfFree.back();
+        pfFree.pop_back();
+        copyState(s, cp.snap);
+        PfNode root;
+        root.snap = s;
+        root.held = cp.held;
+        root.tick = cp.tick;
+        root.hasB = cp.hasBounds;
+        root.lo = cp.lo;
+        root.hi = cp.hi;
+        root.y = s->getPositionY();
+        pf.start = cp.tick;
+        pf.death = route.death;
+        pf.target = route.death + st(150);
+        pf.startY = root.y;
+        for (int f : route.flips) {
+            if (f < cp.tick) {
+                pf.base.push_back(f);
+            }
+        }
+        pf.frontier.push_back(std::move(root));
+        pf.active = true;
+        if (routeReports < 16) {
+            ++routeReports;
+            say("route: stuck {:.1f} s ahead in {}, pathfinder from {:.1f} s before it", (route.death - tickCount) / static_cast<double>(st(240)),
+                dcp.snap->m_isDart ? "wave" : "ship", (route.death - cp.tick) / static_cast<double>(st(240)));
+        }
+        return true;
+    }
+
+    void pfFinish(PlayLayer* layer, PfNode const& win) {
+        route.flips = pf.base;
+        route.flips.insert(route.flips.end(), win.flips.begin(), win.flips.end());
+        route.groups.erase(std::remove_if(route.groups.begin(), route.groups.end(), [&](RouteGroup const& g) { return g.first >= pf.start; }),
+            route.groups.end());
+        for (int f : win.flips) {
+            route.groups.push_back({ f, f });
+        }
+        route.stuck = false;
+        route.sprinting = false;
+        route.takebacks = 0;
+        route.bannedFirst.clear();
+        int start = pf.start;
+        if (routeReports < 16) {
+            ++routeReports;
+            say("route: pathfinder found a way ({} steps, {} tests, {} inputs)", pf.steps, pf.tests, win.flips.size());
+        }
+        pfReset();
+        routeKeepCps(start);
+    }
+
+    void pfStep(PlayLayer* layer, PlayerObject* p1) {
+        if (pf.idx < pf.frontier.size()) {
+            auto& node = pf.frontier[pf.idx];
+            int v = pf.variant;
+            int step = st(6);
+            std::vector<int> flips;
+            if (v == 1) {
+                flips.push_back(node.tick);
+            }
+            RoutePoint from { node.tick, node.snap, node.held, node.hasB, node.lo, node.hi };
+            pfOut = nullptr;
+            pfStepLen = step;
+            pfActive = true;
+            int lived = routeSim(layer, p1, from, flips, step, true);
+            pfActive = false;
+            ++pf.tests;
+            if (pfOut && lived >= step) {
+                PfNode child;
+                child.snap = pfOut;
+                child.held = pfOutHeld;
+                child.tick = node.tick + step;
+                child.flips = node.flips;
+                if (v == 1) {
+                    child.flips.push_back(node.tick);
+                }
+                child.hasB = pfOutB;
+                child.lo = pfOutLo;
+                child.hi = pfOutHi;
+                child.y = pfOut->getPositionY();
+                pf.next.push_back(std::move(child));
+            }
+            else if (pfOut) {
+                pfFree.push_back(pfOut);
+            }
+            pfOut = nullptr;
+            if (v == 0) {
+                pf.variant = 1;
+            }
+            else {
+                pf.variant = 0;
+                ++pf.idx;
+            }
+            return;
+        }
+        // the round is over: the old paths go, the new ones are thinned out (one per 8 units of
+        // height and button state, at most 20, spread over the heights)
+        for (auto& n : pf.frontier) {
+            pfGive(n);
+        }
+        pf.frontier.clear();
+        ++pf.steps;
+        std::sort(pf.next.begin(), pf.next.end(), [](PfNode const& a, PfNode const& b) { return a.y < b.y; });
+        std::vector<PfNode> kept;
+        std::set<int> seenKeys;
+        for (auto& n : pf.next) {
+            int key = static_cast<int>(std::floor(n.y / 8.f)) * 2 + (n.held ? 1 : 0);
+            if (seenKeys.insert(key).second) {
+                kept.push_back(std::move(n));
+            }
+            else {
+                pfGive(n);
+            }
+        }
+        pf.next.clear();
+        if (kept.size() > 20) {
+            std::vector<PfNode> spread;
+            for (size_t i = 0; i < 20; ++i) {
+                size_t j = i * (kept.size() - 1) / 19;
+                spread.push_back(std::move(kept[j]));
+                kept[j].snap = nullptr;
+            }
+            for (auto& n : kept) {
+                pfGive(n);
+            }
+            kept = std::move(spread);
+        }
+        if (kept.empty()) {
+            int tests = pf.tests, steps = pf.steps;
+            pfReset();
+            routeStuck(layer, fmt::format("the pathfinder found no way either ({} steps, {} tests)", steps, tests));
+            return;
+        }
+        if (kept.front().tick >= pf.target) {
+            // the path nearest the height it started at
+            size_t best = 0;
+            for (size_t i = 1; i < kept.size(); ++i) {
+                if (std::abs(kept[i].y - pf.startY) < std::abs(kept[best].y - pf.startY)) {
+                    best = i;
+                }
+            }
+            PfNode win = std::move(kept[best]);
+            kept[best].snap = nullptr;
+            for (auto& n : kept) {
+                pfGive(n);
+            }
+            pfFinish(layer, win);
+            pfGive(win);
+            return;
+        }
+        pf.frontier = std::move(kept);
+        pf.idx = 0;
+        pf.variant = 0;
+    }
+
     void routeTakeBack(PlayLayer* layer, PlayerObject* p1) {
         int deeper = routeStuckHere(route.death);
         if (route.groups.empty() || route.takebacks >= 8 + 6 * deeper || route.groups.back().first <= tickCount + 1) {
-            if (beamStart(layer, p1)) {
+            if (pfStart(layer, p1) || beamStart(layer, p1)) {  // test 57: the pathfinder in wave / ship
                 route.sprinting = false;
                 return;
             }
@@ -6745,7 +6994,10 @@ namespace {
         auto start = std::chrono::steady_clock::now();
         double left = budget - autoplay.frameMs;
         while (left > 0.2) {
-            if (beam.active) {
+            if (pf.active) {
+                pfStep(layer, p1);
+            }
+            else if (beam.active) {
                 beamStep(layer, p1);
             }
             else if (route.sprinting) {
