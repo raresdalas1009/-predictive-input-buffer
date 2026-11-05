@@ -6054,6 +6054,23 @@ namespace {
         return f;
     }
 
+    // v3.0 test 55: still holding outside wave / ship: an orb or a jump needs a new click (let go,
+    // press again a tick later, let go after 4). The route only ever let go there, so an orb reached
+    // while holding was never clicked (Aquamarine 33.5%: "orb clicks tried 0", button held).
+    bool routeReclickMode(int t) {
+        auto const& cp = routeCpAtOrBefore(t);
+        bool holdMode = cp.snap->m_isDart || cp.snap->m_isShip;
+        return !holdMode && routeHeldAt(t);
+    }
+
+    std::vector<int> routeReclick(int t) {
+        std::vector<int> f = route.flips;
+        f.push_back(t);
+        f.push_back(t + 1);
+        f.push_back(t + 1 + st(3));
+        return f;
+    }
+
     bool routeTapMode(int t) {
         auto const& cp = routeCpAtOrBefore(t);
         bool holdMode = cp.snap->m_isDart || cp.snap->m_isShip;
@@ -6064,6 +6081,16 @@ namespace {
         int t = (hi + lo) / 2;  // the middle of the timings that work: room on both sides
         bool tapMode = routeTapMode(t);
         bool tap = variant == 0 && tapMode;
+        if (variant == 1 && routeReclickMode(t)) {
+            route.flips.push_back(t);
+            route.flips.push_back(t + 1);
+            route.flips.push_back(t + 1 + st(3));
+            route.groups.push_back({ t, t + 1 + st(3) });
+            route.sprinting = false;
+            route.afterTakeback = false;
+            routeKeepCps(t);
+            return;
+        }
         route.flips.push_back(t);
         int last = t;
         if (tap) {
@@ -6314,16 +6341,17 @@ namespace {
         if (!route.orbFirst.empty() && route.windowHi < 0) {
             int t = route.orbFirst.front();
             route.orbFirst.erase(route.orbFirst.begin());
-            if (t >= route.lower && t < route.death && !route.bannedFirst.count(t) && !routeHeldAt(t)) {
+            if (t >= route.lower && t < route.death && !route.bannedFirst.count(t)) {
                 bool tapMode = routeTapMode(t);
+                bool reclick = routeReclickMode(t);
                 auto const& cp = routeCpAtOrBefore(t);
                 int cpTick = cp.tick;
                 int length = route.death - cpTick + routeNeeded(t);
-                int lived = routeSim(layer, p1, cp, routeWith(t, tapMode), length, false);
+                int lived = routeSim(layer, p1, cp, reclick ? routeReclick(t) : routeWith(t, tapMode), length, false);
                 ++route.orbTries;
                 route.orbBest = std::max(route.orbBest, cpTick + lived - route.death);
                 if (lived >= length) {
-                    routeAccept(layer, p1, t, t, 0);  // the orb's middle gets through: taken as it is
+                    routeAccept(layer, p1, t, t, reclick ? 1 : 0);  // the orb's middle gets through: taken as it is
                     return;
                 }
                 if (cpTick + lived > route.bestEnd) {
@@ -6374,9 +6402,10 @@ namespace {
             return;
         }
         bool tapMode = routeTapMode(t);
-        int variants = tapMode ? 2 : 1;
+        bool reclickMode = routeReclickMode(t);
+        int variants = (tapMode || reclickMode) ? 2 : 1;
         int v = route.windowHi >= 0 ? route.windowVariant : route.variant;
-        auto flips = routeWith(t, tapMode && v == 0);
+        auto flips = (reclickMode && v == 1) ? routeReclick(t) : routeWith(t, tapMode && v == 0);
         auto const& cp = routeCpAtOrBefore(t);
         int cpTick = cp.tick;
         int length = route.death - cpTick + routeNeeded(t);
