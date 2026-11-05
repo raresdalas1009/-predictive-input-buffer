@@ -6591,7 +6591,10 @@ namespace {
             if (k >= 0 && k < static_cast<int>(route.pos.size())) {
                 auto want = route.pos[k];
                 auto now = p1->getPosition();
-                if (std::abs(want.x - now.x) > 5.f || std::abs(want.y - now.y) > 5.f) {
+                // v3.0 test 54: only a big difference (10 units) replans at once; a small one is left to
+                // the re-check from you, which replans only if it finds a death (a 5-unit ship
+                // difference replanned 0.3 s before a wave portal: Aquamarine 69%)
+                if (std::abs(want.x - now.x) > 10.f || std::abs(want.y - now.y) > 10.f) {
                     if (routeDrifts < 12) {
                         ++routeDrifts;
                         say("route drift at tick {} ({}): you're at {:.0f},{:.0f}, the route said {:.0f},{:.0f}, planning again from you", at,
@@ -6636,7 +6639,7 @@ namespace {
                     break;
                 }
             }
-            if (off && lived >= length) {
+            if (false && off && lived >= length) {  // test 54: off (the re-check below catches what matters)
                 if (routeRechecks < 12) {
                     ++routeRechecks;
                     say("route re-anchored on you at tick {} (its path had drifted from yours)", at);
