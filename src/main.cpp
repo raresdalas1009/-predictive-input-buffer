@@ -4977,6 +4977,7 @@ namespace {
         std::vector<int> macroDeaths;
         std::vector<std::pair<int, int>> macroGaps;  // test 75: stretches autoplay plays itself, the macro the rest
         bool macroInGap = false;
+        int macroStepNow = 0;  // test 82: the macro's step as the game's step started (processCommands)
         // test 79: which step the macro's frame 0 is (bots differ by a step): tried in turn, the best kept
         int macroTry = 0;       // index into MACRO_OFFSETS while trying
         bool macroTuned = false;
@@ -6311,9 +6312,10 @@ namespace {
                         }
                     }
                     if (!grown) {
-                        autoplay.macroGaps.push_back({ std::max(0, reached - st(120)), reached + st(240) });
+                        // test 82: from 1.5 s before (0.5 s was too little time to see the death coming)
+                        autoplay.macroGaps.push_back({ std::max(0, reached - st(360)), reached + st(240) });
                         say("autoplay: the macro died at step {} again: autoplay plans steps {}-{}, the macro plays the rest", reached,
-                            std::max(0, reached - st(120)), reached + st(240));
+                            std::max(0, reached - st(360)), reached + st(240));
                     }
                 }
                 else {
@@ -8095,8 +8097,23 @@ namespace {
         if (gap != autoplay.macroInGap) {
             autoplay.macroInGap = gap;
             if (gap) {
-                routeReset();  // autoplay plans this stretch from where you are
-                say("autoplay: plans the stretch the macro dies in (from step {})", now);
+                // test 82 (like Nova): the route starts from you holding the macro's own inputs and checks
+                // them with the ghost; only where they'd die does it look for others (test 75 planned the
+                // stretch from nothing, with half a second to do it)
+                routeStart(layer, p1);
+                if (route.active) {
+                    int base = tickCount - autoplay.macroStepNow;
+                    route.flips.clear();
+                    route.groups.clear();
+                    for (auto const& [m, down] : autoplay.macro) {
+                        int t = base + m;
+                        if (m >= autoplay.macroStepNow && t > tickCount) {
+                            route.flips.push_back(t);
+                            route.groups.push_back({ t, t });
+                        }
+                    }
+                }
+                say("autoplay: plans the stretch the macro dies in (from step {}), starting from the macro's own inputs", now);
             }
             else {
                 // back to the macro: its button as it has it here
@@ -8133,6 +8150,7 @@ namespace {
         if (progressPerStep <= 0) {
             return;  // one more step to know how the counter moves
         }
+        autoplay.macroStepNow = macroNow(layer);
         if (!macroUsable(layer)) {
             if (autoplay.macroSyncedFor != autoplay.attemptNo) {
                 autoplay.macroSyncedFor = autoplay.attemptNo;
