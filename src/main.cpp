@@ -4987,6 +4987,142 @@ namespace online {
     }
 }
 
+    // ===== test 91: your account (a game linked to your Discord on the CBF site) =====
+    namespace account {
+        struct Stats {
+            bool loaded = false;
+            bool linked = false;
+            std::string name;
+            int games = 0, levelsBeaten = 0, finishes = 0, runsShared = 0, othersUsed = 0;
+            std::vector<std::string> recent;
+        };
+        Stats stats;
+        bool dirty = false;      // the window shows it again
+        bool linking = false;
+        std::string code;        // the code the browser shows while linking
+        std::string status;
+
+        void refresh() {
+            if (std::string_view(online::URL).empty()) {
+                return;
+            }
+            std::string url = fmt::format("{}/api/account?id={}", online::URL, online::id());
+            std::thread([url] {
+                auto res = web::WebRequest().timeout(std::chrono::seconds(15)).userAgent("ClickBeforeFrames").getSync(url);
+                Stats st;
+                if (res.ok()) {
+                    if (auto j = res.json(); j.isOk()) {
+                        auto v = j.unwrap();
+                        st.loaded = true;
+                        st.linked = v["linked"].asBool().unwrapOr(false);
+                        st.name = v["name"].asString().unwrapOr("");
+                        st.games = static_cast<int>(v["games"].asInt().unwrapOr(1));
+                        st.levelsBeaten = static_cast<int>(v["levelsBeaten"].asInt().unwrapOr(0));
+                        st.finishes = static_cast<int>(v["finishes"].asInt().unwrapOr(0));
+                        st.runsShared = static_cast<int>(v["runsShared"].asInt().unwrapOr(0));
+                        st.othersUsed = static_cast<int>(v["othersFinishedWithYours"].asInt().unwrapOr(0));
+                        if (v["recent"].isArray()) {
+                            for (auto const& r : v["recent"]) {
+                                st.recent.push_back(r["name"].asString().unwrapOr("?"));
+                            }
+                        }
+                    }
+                }
+                queueInMainThread([st] {
+                    if (st.loaded) {
+                        stats = st;
+                        if (st.linked) {
+                            Mod::get()->setSavedValue("account-name", st.name);
+                        }
+                    }
+                    else {
+                        status = "Couldn't reach the CBF site.";
+                    }
+                    dirty = true;
+                });
+            }).detach();
+        }
+
+        // the game gets a code, the browser opens the site's link page, and the game asks every 3 s
+        // whether you pressed Link there (for 10 minutes)
+        void startLink() {
+            if (linking || std::string_view(online::URL).empty()) {
+                return;
+            }
+            linking = true;
+            status = "Opening the CBF site...";
+            dirty = true;
+            std::string body = fmt::format(R"({{"id":"{}"}})", online::id());
+            std::thread([body] {
+                auto res = web::WebRequest().timeout(std::chrono::seconds(15)).userAgent("ClickBeforeFrames").header("Content-Type", "application/json")
+                    .bodyString(body).postSync(std::string(online::URL) + "/api/link/start");
+                std::string c, url;
+                if (res.ok()) {
+                    if (auto j = res.json(); j.isOk()) {
+                        c = j.unwrap()["code"].asString().unwrapOr("");
+                        url = j.unwrap()["url"].asString().unwrapOr("");
+                    }
+                }
+                if (c.empty()) {
+                    queueInMainThread([] {
+                        linking = false;
+                        status = "Couldn't reach the CBF site.";
+                        dirty = true;
+                    });
+                    return;
+                }
+                queueInMainThread([c, url] {
+                    code = c;
+                    status = fmt::format("Log in with Discord in the browser and press Link (code {}).", c);
+                    dirty = true;
+                    web::openLinkInBrowser(url);
+                });
+                for (int i = 0; i < 200; ++i) {
+                    std::this_thread::sleep_for(std::chrono::seconds(3));
+                    auto p = web::WebRequest().timeout(std::chrono::seconds(10)).userAgent("ClickBeforeFrames")
+                        .getSync(fmt::format("{}/api/link/poll?code={}", online::URL, c));
+                    if (!p.ok()) {
+                        continue;
+                    }
+                    auto j = p.json();
+                    if (j.isErr()) {
+                        continue;
+                    }
+                    auto v = j.unwrap();
+                    if (v["linked"].asBool().unwrapOr(false)) {
+                        std::string name = v["name"].asString().unwrapOr("");
+                        queueInMainThread([name] {
+                            linking = false;
+                            code.clear();
+                            status = "Linked to " + name + ".";
+                            say("account: this game is linked to {} on the CBF site", name);
+                            refresh();
+                        });
+                        return;
+                    }
+                    if (v["expired"].asBool().unwrapOr(false)) {
+                        break;
+                    }
+                }
+                queueInMainThread([] {
+                    linking = false;
+                    code.clear();
+                    status = "The code ran out. Press Link with Discord again.";
+                    dirty = true;
+                });
+            }).detach();
+        }
+    }
+
+    // test 91: the CBF icon, sized to a game button
+    CCSprite* cbfIcon(float size) {
+        auto* s = CCSprite::create("cbf-icon.png"_spr);
+        if (s && s->getContentSize().width > 0.f) {
+            s->setScale(size / s->getContentSize().width);
+        }
+        return s;
+    }
+
     void manualUpdate();
     std::string updateButtonText();
     bool updateAvailable();
@@ -6488,7 +6624,7 @@ namespace online {
             inputs += fmt::format("{}[{},{}]", inputs.empty() ? "" : ",", t, d ? 1 : 0);
         }
         auto name = matjson::Value(std::string(layer->m_level->m_levelName)).dump();
-        std::string body = fmt::format(R"({{"level":{},"hash":"{}","tps":{},"name":{},"version":"{}","inputs":[{}]}})", layer->m_level->m_levelID.value(),
+        std::string body = fmt::format(R"({{"id":"{}","level":{},"hash":"{}","tps":{},"name":{},"version":"{}","inputs":[{}]}})", online::id(), layer->m_level->m_levelID.value(),
             levelFingerprint(layer->m_level), static_cast<int>(settingTps()), name, Mod::get()->getVersion().toVString(), inputs);
         size_t n = autoplay.runFlips.size();
         std::thread([body, n] {
@@ -9090,9 +9226,10 @@ class BufferMenu : public geode::Popup {
         { "save-ding", "Ding On Save", "A sound when a click is saved" },
         { "performance-mode", "Performance Mode", "Lighter searches for weak phones" },
     };
-    static constexpr char const* TABS[] = { "Log", "Stage", "Modes", "Tools" };
-    static constexpr int TAB_TUNING = 4;
-    static constexpr int TAB_SETTINGS = 5;
+    static constexpr char const* TABS[] = { "Log", "Stage", "Modes", "Tools", "Account" };  // test 91: Account
+    static constexpr int TAB_ACCOUNT = 4;
+    static constexpr int TAB_TUNING = 5;
+    static constexpr int TAB_SETTINGS = 6;
     // stage buttons: Off, then the stages from small to big, then Custom (per-mode frames)
     static constexpr int STAGE_BTN[] = { 7, 0, 1, 2, 3, 4, 5 };
     static constexpr char const* STAGE_LABEL[] = { "Off", "0.5f", "1f", "2f", "4f", "6f", "8f" };
@@ -9675,22 +9812,25 @@ private:
         menu->setPosition({ 0.f, 0.f });
         m_tabsNode->addChild(menu);
         for (int i = 0; i < static_cast<int>(std::size(TABS)); ++i) {
-            float y = H - 72.f - i * 27.f;
+            // test 91: 5 tabs between the logo and the theme box (the 4th one's highlight went over the box)
+            float th = 19.f;
+            float y = H - 63.f - i * 21.5f;
             bool active = i == s_tab || (s_tab >= TAB_TUNING && i == s_back);
             float tw = SIDE - 22.f;
             auto* node = CCNode::create();
-            node->setContentSize({ tw, 22.f });
+            node->setContentSize({ tw, th });
             auto* d = CCDrawNode::create();
             if (active) {
-                roundRect(d, { 0.f, 0.f, tw, 22.f }, 8.f, col(m_t.main, m_light ? 0.25f : 0.22f), 0.6f, col(m_t.main, 0.7f));
+                roundRect(d, { 0.f, 0.f, tw, th }, 7.f, col(m_t.main, m_light ? 0.25f : 0.22f), 0.6f, col(m_t.main, 0.7f));
             }
-            circle(d, { 11.f, 11.f }, 2.4f, active ? col(m_t.soft, 1.f) : col(m_muted, 0.7f), 14);
+            circle(d, { 10.f, th / 2.f }, 2.2f, active ? col(m_t.soft, 1.f) : col(m_muted, 0.7f), 14);
             node->addChild(d);
             auto* l = CCLabelBMFont::create(TABS[i], bodyFont());
-            l->setScale(0.62f);
+            l->setScale(0.56f);
+            l->limitLabelWidth(tw - 26.f, 0.56f, 0.2f);
             l->setColor(active ? m_text : m_muted);
             l->setAnchorPoint({ 0.f, 0.5f });
-            l->setPosition({ 21.f, 11.5f });
+            l->setPosition({ 19.f, th / 2.f + 0.5f });
             node->addChild(l);
             auto* item = CCMenuItemSpriteExtra::create(node, this, menu_selector(BufferMenu::onTab));
             item->m_scaleMultiplier = 1.04f;
@@ -9881,6 +10021,63 @@ private:
         button(m_pageMenu, "Show On Screen", menu_selector(BufferMenu::onConsole), { rx + 14.f + bw * 1.5f, FOOT + 20.f }, bw);
     }
 
+    // test 91: your account: link this game to your Discord on the CBF site, and your autoplay's stats
+    void pageAccount() {
+        pageTitle("Account");
+        float x = contentX(), w = contentW(), top = contentTop();
+        float colW = (w - 6.f) / 2.f;
+        auto const& st = account::stats;
+        if (!st.loaded && account::status.empty()) {
+            account::refresh();
+        }
+        card({ x, FOOT + 6.f, colW, top - FOOT - 6.f }, "Your account", "CBF site");
+        std::string savedName = Mod::get()->getSavedValue<std::string>("account-name", "");
+        bool linked = st.loaded ? st.linked : !savedName.empty();
+        std::string name = st.loaded ? st.name : savedName;
+        float y = top - 34.f;
+        if (linked) {
+            label(m_page, name, 0.75f, m_text, { x + colW / 2.f, y - 6.f })->limitLabelWidth(colW - 20.f, 0.75f, 0.2f);
+            label(m_page, "linked with Discord", 0.36f, m_cyan, { x + colW / 2.f, y - 26.f });
+            if (st.games > 1) {
+                label(m_page, fmt::format("{} games linked to it", st.games), 0.34f, m_muted, { x + colW / 2.f, y - 40.f });
+            }
+        }
+        else {
+            label(m_page, "Link this game to your Discord", 0.42f, m_text, { x + colW / 2.f, y }) ->limitLabelWidth(colW - 20.f, 0.42f, 0.15f);
+            label(m_page, "to see your stats here and on the site.", 0.36f, m_muted, { x + colW / 2.f, y - 13.f })->limitLabelWidth(colW - 20.f, 0.36f, 0.15f);
+            button(m_pageMenu, account::linking ? "Waiting for the browser..." : "Link with Discord", menu_selector(BufferMenu::onLinkAccount),
+                { x + colW / 2.f, y - 42.f }, colW - 24.f, !account::linking, 0, 22.f, ccColor3B { 88, 101, 242 });
+        }
+        if (!account::status.empty()) {
+            label(m_page, account::status, 0.32f, m_muted, { x + colW / 2.f, FOOT + 46.f })->limitLabelWidth(colW - 16.f, 0.32f, 0.12f);
+        }
+        float bw = (colW - 22.f) / 2.f;
+        button(m_pageMenu, "Refresh", menu_selector(BufferMenu::onAccountRefresh), { x + 8.f + bw / 2.f, FOOT + 20.f }, bw);
+        button(m_pageMenu, "Open Site", menu_selector(BufferMenu::onOpenSite), { x + 14.f + bw * 1.5f, FOOT + 20.f }, bw);
+
+        float rx = x + colW + 6.f;
+        card({ rx, FOOT + 6.f, colW, top - FOOT - 6.f }, "Your autoplay", "global brain");
+        auto stat = [&](float yy, std::string const& n, std::string const& what) {
+            label(m_page, n, 0.7f, m_text, { rx + 12.f, yy }, { 0.f, 0.5f });
+            label(m_page, what, 0.34f, m_muted, { rx + 58.f, yy }, { 0.f, 0.5f })->limitLabelWidth(colW - 66.f, 0.34f, 0.12f);
+        };
+        float sy = top - 36.f;
+        stat(sy, fmt::format("{}", st.levelsBeaten), "levels beaten 0-100");
+        stat(sy - 24.f, fmt::format("{}", st.runsShared), "runs you shared first");
+        stat(sy - 48.f, fmt::format("{}", st.othersUsed), "finishes by others with your runs");
+        stat(sy - 72.f, fmt::format("{}", st.finishes), "runs finished in all");
+        if (!st.recent.empty()) {
+            std::string list;
+            for (size_t i = 0; i < st.recent.size() && i < 3; ++i) {
+                list += (i ? ", " : "") + st.recent[i];
+            }
+            label(m_page, "Lately: " + list, 0.32f, m_muted, { rx + colW / 2.f, FOOT + 22.f })->limitLabelWidth(colW - 16.f, 0.32f, 0.12f);
+        }
+        else if (!st.loaded) {
+            label(m_page, "Loading...", 0.34f, m_muted, { rx + colW / 2.f, FOOT + 22.f });
+        }
+    }
+
     void pageTuning() {
         pageTitle("Tuning");
         float x = contentX(), w = contentW(), top = contentTop();
@@ -9982,6 +10179,7 @@ private:
             case 0: pageLog(); break;
             case 2: pageModes(); break;
             case 3: pageTools(); break;
+            case TAB_ACCOUNT: pageAccount(); break;
             case TAB_TUNING: pageTuning(); break;
             case TAB_SETTINGS: pageSettings(); break;
             default: pageStage(); break;
@@ -10198,6 +10396,12 @@ private:
         if (m_onlineTimer > 1.f) {
             m_onlineTimer = 0.f;
             refreshOnline();
+        }
+        if (account::dirty) {
+            account::dirty = false;
+            if (s_tab == TAB_ACCOUNT) {
+                rebuildPage();  // test 91: the account page shows what just came in
+            }
         }
         m_shootTimer -= dt;
         if (m_shootTimer <= 0.f && m_sky && !m_light) {
@@ -10426,6 +10630,21 @@ private:
         rebuildPage();
     }
 
+    // test 91: account
+    void onLinkAccount(CCObject*) {
+        account::startLink();
+        rebuildPage();
+    }
+
+    void onAccountRefresh(CCObject*) {
+        account::status.clear();
+        account::refresh();
+    }
+
+    void onOpenSite(CCObject*) {
+        web::openLinkInBrowser(std::string(online::URL));
+    }
+
     // test 90: check for / install the newest version
     void onUpdates(CCObject*) {
         manualUpdate();
@@ -10569,12 +10788,11 @@ static void addPauseButton(CCNode* pause) {
     if (!Mod::get()->getSavedValue<bool>("pause-button", true)) {
         return;
     }
-    auto* top = CCSprite::create("heart.png"_spr);
-    if (!top) {
+    // test 91: the CBF icon (was a heart on a purple circle)
+    auto* sprite = cbfIcon(42.f);
+    if (!sprite) {
         return;
     }
-    top->setScale(0.55f);
-    auto* sprite = CircleButtonSprite::create(top, CircleBaseColor::DarkPurple, CircleBaseSize::Medium);
     auto* button = CCMenuItemExt::createSpriteExtra(sprite, [](CCMenuItemSpriteExtra*) {
         BufferMenu::open();
     });
@@ -11719,14 +11937,11 @@ class $modify(BufMenuLayer, MenuLayer) {
             return false;
         }
         CBF_STEP("main menu: heart button");
-        auto* top = CCSprite::create("heart.png"_spr);
-        if (!top) {
-            geode::log::error("heart.png missing, no menu button");
+        auto* sprite = cbfIcon(46.f);  // test 91: the CBF icon (was a heart)
+        if (!sprite) {
+            geode::log::error("cbf-icon.png missing, no menu button");
             return true;
         }
-        top->setScale(0.55f);
-        top->setColor({ 255, 255, 255 });
-        auto* sprite = CircleButtonSprite::create(top, CircleBaseColor::DarkPurple, CircleBaseSize::Medium);
         auto* item = CCMenuItemSpriteExtra::create(sprite, this, menu_selector(BufMenuLayer::onBufferMenu));
         item->setID("click-before-frames-button"_spr);
         if (auto* bottom = this->getChildByID("bottom-menu")) {

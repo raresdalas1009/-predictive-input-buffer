@@ -33,3 +33,9 @@ CREATE TABLE IF NOT EXISTS runs (
   confirms INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS runs_level ON runs (level_id, level_hash, tps);
+
+-- test 91: linking games to Discord, and who finished what
+ALTER TABLE players ADD COLUMN discord_id TEXT;
+CREATE TABLE IF NOT EXISTS link_codes (code TEXT PRIMARY KEY, player_id TEXT NOT NULL, discord_id TEXT, created INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS finishes (player_id TEXT NOT NULL, run_key TEXT NOT NULL, level_id INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (player_id, run_key));
+CREATE TABLE IF NOT EXISTS run_owners (run_key TEXT PRIMARY KEY, player_id TEXT NOT NULL);

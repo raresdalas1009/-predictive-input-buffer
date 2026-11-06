@@ -11,6 +11,8 @@
 //   GET  /api/latest    the newest mod version uploaded on the admin page
 //   GET  /download/latest   that file
 //   GET  /admin, POST /api/admin/upload   upload a new version (your Discord account only)
+//   POST /api/link/start, GET /link, POST /api/link/confirm, GET /api/link/poll   link a game to your Discord
+//   GET  /api/account   a linked game's stats (by its random id)
 //   everything else     the website in public/
 
 const ONLINE_FOR = 180;            // seconds since the last ping that still count as online
@@ -28,6 +30,11 @@ export default {
       if (url.pathname === "/auth/login") return login(request, env);
       if (url.pathname === "/auth/callback") return await callback(request, env);
       if (url.pathname === "/auth/logout") return logout(request);
+      if (url.pathname === "/api/link/start" && request.method === "POST") return await linkStart(request, env);
+      if (url.pathname === "/link") return await linkPage(request, env);
+      if (url.pathname === "/api/link/confirm" && request.method === "POST") return await linkConfirm(request, env);
+      if (url.pathname === "/api/link/poll") return await linkPoll(url, env);
+      if (url.pathname === "/api/account") return await account(url, env);
       if (url.pathname === "/api/runs" && request.method === "POST") return await runUpload(request, env);
       if (url.pathname === "/api/runs" && request.method === "GET") return await runGet(url, env);
       if (url.pathname === "/api/latest") return await latest(env);
@@ -123,6 +130,7 @@ function login(request, env) {
   const url = new URL(request.url);
   const state = randomHex(16);
   const redirect = `${url.origin}/auth/callback`;
+  const next = (url.searchParams.get("next") || "/").startsWith("/") ? url.searchParams.get("next") || "/" : "/";
   const q = new URLSearchParams({
     client_id: env.DISCORD_CLIENT_ID,
     response_type: "code",
@@ -135,7 +143,7 @@ function login(request, env) {
     status: 302,
     headers: {
       Location: `https://discord.com/oauth2/authorize?${q}`,
-      "Set-Cookie": cookie("cbf_state", state, 600),
+      "Set-Cookie": cookie("cbf_state", `${state}.${b64url(new TextEncoder().encode(next.slice(0, 200)))}`, 600),
     },
   });
 }
@@ -144,7 +152,13 @@ async function callback(request, env) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
-  if (!code || !state || state !== readCookie(request, "cbf_state")) return redirectHome("login=failed");
+  const saved = (readCookie(request, "cbf_state") || "").split(".");
+  if (!code || !state || state !== saved[0]) return redirectHome("login=failed");
+  let next = "/";
+  try {
+    next = saved[1] ? new TextDecoder().decode(unb64url(saved[1])) : "/";
+  } catch {}
+  if (!next.startsWith("/") || next.startsWith("//")) next = "/";
   const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -169,7 +183,7 @@ async function callback(request, env) {
   ).bind(me.id, name, me.avatar || null, now).run();
   // the Discord token isn't kept: the session only says who you are, signed so it can't be faked
   const session = await sign(env, { id: me.id, name, avatar: me.avatar || null, exp: now + SESSION_DAYS * 86400 });
-  const headers = new Headers({ Location: "/" });
+  const headers = new Headers({ Location: next });
   headers.append("Set-Cookie", cookie("cbf_session", session, SESSION_DAYS * 86400));
   headers.append("Set-Cookie", cookie("cbf_state", "", 0));
   return new Response(null, { status: 302, headers });
@@ -291,7 +305,14 @@ async function runUpload(request, env) {
   const key = await sha256(`${level}|${hash}|${tps}|${text}`);
   const name = String(b.name || "").replace(/[\u0000-\u001f<>]/g, "").slice(0, 60);
   const version = String(b.version || "?").replace(/[^0-9A-Za-z.\-+]/g, "").slice(0, 24);
+  const player = /^[0-9a-f]{32}$/.test(String(b.id || "")) ? String(b.id) : null;
   const now = Math.floor(Date.now() / 1000);
+  if (player) {
+    // who finished it (for "your stats"): one row per game and run
+    try {
+      await env.DB.prepare(`INSERT OR IGNORE INTO finishes (player_id, run_key, level_id, at) VALUES (?1, ?2, ?3, ?4)`).bind(player, key, level, now).run();
+    } catch {}
+  }
   const had = await env.DB.prepare(`SELECT id FROM runs WHERE run_key = ?1`).bind(key).first();
   if (had) {
     await env.DB.prepare(`UPDATE runs SET confirms = confirms + 1, last_confirm = ?2 WHERE id = ?1`).bind(had.id, now).run();
@@ -301,6 +322,11 @@ async function runUpload(request, env) {
     `INSERT INTO runs (run_key, level_id, level_hash, level_name, tps, steps, inputs, version, created, last_confirm, confirms)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, 1)`
   ).bind(key, level, hash, name, tps, last, text, version, now).run();
+  if (player) {
+    try {
+      await env.DB.prepare(`INSERT OR IGNORE INTO run_owners (run_key, player_id) VALUES (?1, ?2)`).bind(key, player).run();
+    } catch {}
+  }
   return json({ ok: true, confirmed: false });
 }
 
@@ -377,4 +403,131 @@ async function adminUpload(request, env) {
   await env.FILES.put("latest-file", data);
   await env.FILES.put("latest-meta", JSON.stringify({ version, notes: String(form.get("notes") || "").slice(0, 500), size: data.byteLength, at: Date.now() }));
   return new Response(null, { status: 302, headers: { Location: "/admin" } });
+}
+
+// ---------- linking a game to Discord ----------
+// The game asks for a code, opens /link?code=… in the browser; you log in with Discord there and
+// press Link; the game asks every few seconds whether it's linked. A code lasts 10 minutes.
+
+const LINK_MINUTES = 10;
+
+async function linkStart(request, env) {
+  let b;
+  try {
+    b = await request.json();
+  } catch {
+    return json({ error: "bad json" }, 400);
+  }
+  const id = String(b.id || "");
+  if (!/^[0-9a-f]{32}$/.test(id)) return json({ error: "bad id" }, 400);
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  const code = [...bytes].map((x) => alphabet[x % alphabet.length]).join("");
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(`DELETE FROM link_codes WHERE created < ?1`).bind(now - LINK_MINUTES * 60).run();
+  await env.DB.prepare(`INSERT INTO link_codes (code, player_id, created) VALUES (?1, ?2, ?3)`).bind(code, id, now).run();
+  const origin = new URL(request.url).origin;
+  return json({ code, url: `${origin}/link?code=${code}`, minutes: LINK_MINUTES });
+}
+
+async function linkCode(env, code) {
+  if (!/^[A-Z0-9]{6}$/.test(code || "")) return null;
+  const now = Math.floor(Date.now() / 1000);
+  return await env.DB.prepare(`SELECT code, player_id, discord_id, created FROM link_codes WHERE code = ?1 AND created > ?2`)
+    .bind(code, now - LINK_MINUTES * 60).first();
+}
+
+async function linkPage(request, env) {
+  const url = new URL(request.url);
+  const code = String(url.searchParams.get("code") || "").toUpperCase();
+  const row = await linkCode(env, code);
+  const me = await currentUser(request, env);
+  let body;
+  if (!row) {
+    body = `<p>This code isn't valid any more. Press <b>Link with Discord</b> in the game again.</p>`;
+  } else if (row.discord_id) {
+    body = `<p>Done! Your game is linked. You can close this page and go back to Geometry Dash.</p>`;
+  } else if (!me) {
+    body = `<p>Link your game to your Discord account. First log in:</p>
+      <p><a class="btn" href="/auth/login?next=${encodeURIComponent("/link?code=" + code)}">Log in with Discord</a></p>`;
+  } else {
+    body = `<p>Link the game with code <b>${code}</b> to <b>${escapeHtml(me.name)}</b>?</p>
+      <form method="post" action="/api/link/confirm"><input type="hidden" name="code" value="${code}"><button class="btn">Link</button></form>`;
+  }
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Link your game</title>
+     <style>body{font-family:system-ui;background:#0c0a1a;color:#eee;padding:24px;max-width:560px;margin:auto}
+     .btn{display:inline-block;background:#5865f2;color:#fff;border:0;border-radius:999px;padding:10px 18px;font-size:15px;text-decoration:none;cursor:pointer}
+     a{color:#a66bff}</style>
+     <h1>Click Before Frames</h1>${body}<p><a href="/">Back to the site</a></p>`,
+    { headers: { "Content-Type": "text/html; charset=utf-8" } }
+  );
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+async function linkConfirm(request, env) {
+  const me = await currentUser(request, env);
+  const form = await request.formData();
+  const code = String(form.get("code") || "").toUpperCase();
+  const row = await linkCode(env, code);
+  if (!me || !row) return new Response(null, { status: 302, headers: { Location: `/link?code=${code}` } });
+  await env.DB.prepare(`UPDATE link_codes SET discord_id = ?2 WHERE code = ?1`).bind(code, me.id).run();
+  await env.DB.prepare(`UPDATE players SET discord_id = ?2 WHERE id = ?1`).bind(row.player_id, me.id).run();
+  return new Response(null, { status: 302, headers: { Location: `/link?code=${code}` } });
+}
+
+async function linkPoll(url, env) {
+  const row = await linkCode(env, String(url.searchParams.get("code") || "").toUpperCase());
+  if (!row) return json({ linked: false, expired: true });
+  if (!row.discord_id) return json({ linked: false });
+  const u = await env.DB.prepare(`SELECT name FROM users WHERE discord_id = ?1`).bind(row.discord_id).first();
+  return json({ linked: true, name: u?.name || "" });
+}
+
+// a game's stats: who it's linked to, what its autoplay beat and shared
+async function account(url, env) {
+  const id = String(url.searchParams.get("id") || "");
+  if (!/^[0-9a-f]{32}$/.test(id)) return json({ error: "bad id" }, 400);
+  const p = await env.DB.prepare(`SELECT first_seen, discord_id FROM players WHERE id = ?1`).bind(id).first();
+  if (!p) return json({ linked: false });
+  let user = null;
+  if (p.discord_id) {
+    user = await env.DB.prepare(`SELECT discord_id, name, avatar FROM users WHERE discord_id = ?1`).bind(p.discord_id).first();
+  }
+  // everything the games linked to the same Discord account did
+  const ids = p.discord_id
+    ? (await env.DB.prepare(`SELECT id FROM players WHERE discord_id = ?1`).bind(p.discord_id).all()).results.map((r) => r.id)
+    : [id];
+  const marks = ids.map((_, i) => `?${i + 1}`).join(",");
+  let beaten = 0, finishes = 0, shared = 0, othersUsed = 0, recent = [];
+  try {
+    const f = await env.DB.prepare(`SELECT COUNT(DISTINCT level_id) AS lv, COUNT(*) AS n FROM finishes WHERE player_id IN (${marks})`).bind(...ids).first();
+    beaten = f?.lv || 0;
+    finishes = f?.n || 0;
+    const o = await env.DB.prepare(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(r.confirms - 1), 0) AS used FROM run_owners o JOIN runs r ON r.run_key = o.run_key WHERE o.player_id IN (${marks})`
+    ).bind(...ids).first();
+    shared = o?.n || 0;
+    othersUsed = o?.used || 0;
+    recent = (await env.DB.prepare(
+      `SELECT f.level_id AS id, MAX(r.level_name) AS name, MAX(f.at) AS at FROM finishes f LEFT JOIN runs r ON r.run_key = f.run_key
+       WHERE f.player_id IN (${marks}) GROUP BY f.level_id ORDER BY at DESC LIMIT 5`
+    ).bind(...ids).all()).results;
+  } catch {}
+  return json({
+    linked: !!user,
+    name: user?.name || "",
+    avatar: user?.avatar ? `https://cdn.discordapp.com/avatars/${user.discord_id}/${user.avatar}.png?size=64` : null,
+    since: p.first_seen,
+    games: ids.length,
+    levelsBeaten: beaten,
+    finishes,
+    runsShared: shared,
+    othersFinishedWithYours: othersUsed,
+    recent: recent.map((r) => ({ id: r.id, name: r.name || `Level ${r.id}` })),
+  });
 }
