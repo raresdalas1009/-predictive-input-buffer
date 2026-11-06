@@ -5342,10 +5342,6 @@ namespace {
             return false;
         }
         auto* plNow = GameManager::get()->m_playLayer;
-        if (plNow && plNow->m_startPosObject && m.fixes.size() < 2) {
-            say("autoplay: the macro {} has no position records, so it only plays from the level's start (not from a start position)", m.file);
-            return false;
-        }
         double k = st(240) / m.fps;
         // test 70: outside 2-player levels the "player 2" clicks are yours too: the button is down
         // while either is
@@ -7853,8 +7849,18 @@ namespace {
         return static_cast<int>(layer->m_gameState.m_currentProgress) + static_cast<int>(Mod::get()->getSettingValue<int64_t>("macro-offset"));
     }
 
-    bool macroPlaying(PlayLayer* layer, PlayerObject* p1) {
+    // test 73: a macro without position records only lines up from the level's start (test 71/72
+    // played it by step from a start position too: the wrong inputs in the wrong places)
+    bool macroUsable(PlayLayer* layer) {
         if (autoplay.macro.empty() || layer->m_isPracticeMode) {
+            return false;
+        }
+        autoplay.macroByX = layer->m_startPosObject && !autoplay.macroX.empty();
+        return !layer->m_startPosObject || autoplay.macroByX;
+    }
+
+    bool macroPlaying(PlayLayer* layer, PlayerObject* p1) {
+        if (!macroUsable(layer)) {
             return false;
         }
         if (autoplay.macroByX) {
@@ -7879,6 +7885,14 @@ namespace {
     // at the start of each game step, before the players move
     void macroStep(PlayLayer* layer) {
         if (!autoplay.active || autoplay.layer != layer || autoplay.macro.empty() || layer->m_isPracticeMode || buf.simulating) {
+            return;
+        }
+        if (!macroUsable(layer)) {
+            if (autoplay.macroSyncedFor != autoplay.attemptNo) {
+                autoplay.macroSyncedFor = autoplay.attemptNo;
+                say("autoplay: the macro {} has no position records, so it only plays from the level's start: autoplay plays this start position itself",
+                    autoplay.fromMacro);
+            }
             return;
         }
         auto* p1 = layer->m_player1;
