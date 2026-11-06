@@ -6099,6 +6099,7 @@ namespace {
     }
 
     // a death: keep this attempt's inputs up to a bit before it (normal mode, bot-only attempts)
+    int macroNow(PlayLayer* layer);
     void autoplayDied(PlayLayer* layer) {
         if (layer->m_isPracticeMode || (autoplay.userTouched && autoplay.macro.empty())) {
             return;
@@ -6106,7 +6107,7 @@ namespace {
         // test 70: with a macro, the macro stays. Dying twice at the same spot in it: it's played up
         // to 0.5 s before there, and the route plans the rest
         if (!autoplay.macro.empty()) {
-            int reached = static_cast<int>(layer->m_gameState.m_currentProgress);
+            int reached = macroNow(layer);
             if (reached < autoplay.macroUntil + st(60)) {
                 autoplay.macroDeaths.push_back(reached);
                 int here = 0;
@@ -7845,8 +7846,26 @@ namespace {
     }
 
     // ===== test 72: macros pressed like a bot =====
+    // test 74: the game's step counter goes up by 2 a step (the macro's frames by 1: tests 70-73
+    // played every macro at double speed). How much it moves a step is measured, and the macro's
+    // step is the counter divided by that
+    int progressPerStep = 0;
+    int lastProgress = -1;
+
+    void measureProgress(PlayLayer* layer) {
+        int p = static_cast<int>(layer->m_gameState.m_currentProgress);
+        int d = p - lastProgress;
+        if (lastProgress >= 0 && d >= 1 && d <= 8 && d != progressPerStep) {
+            progressPerStep = d;
+            say("macro: the game's step counter moves {} a step", d);
+        }
+        lastProgress = p;
+    }
+
     int macroNow(PlayLayer* layer) {
-        return static_cast<int>(layer->m_gameState.m_currentProgress) + static_cast<int>(Mod::get()->getSettingValue<int64_t>("macro-offset"));
+        int per = progressPerStep > 0 ? progressPerStep : 2;
+        return static_cast<int>(layer->m_gameState.m_currentProgress) / per +
+            static_cast<int>(Mod::get()->getSettingValue<int64_t>("macro-offset"));
     }
 
     // test 73: a macro without position records only lines up from the level's start (test 71/72
@@ -7886,6 +7905,9 @@ namespace {
     void macroStep(PlayLayer* layer) {
         if (!autoplay.active || autoplay.layer != layer || autoplay.macro.empty() || layer->m_isPracticeMode || buf.simulating) {
             return;
+        }
+        if (progressPerStep <= 0) {
+            return;  // one more step to know how the counter moves
         }
         if (!macroUsable(layer)) {
             if (autoplay.macroSyncedFor != autoplay.attemptNo) {
@@ -7932,6 +7954,7 @@ namespace {
         if (!autoplay.active || autoplay.layer != layer || p1->m_isDead || !buf.ghost1 || buf.owner != layer) {
             return;
         }
+        measureProgress(layer);  // test 74: once a physics step
         // Take Over: your clicks go first; the bot plans again once you've stopped for a moment
         if (autoplay.takeOver && tickCount < autoplay.userUntil) {
             autoplay.plan.clear();
