@@ -7848,6 +7848,72 @@ namespace {
         }
     }
 
+    // ===== test 72: macros pressed like a bot =====
+    int macroNow(PlayLayer* layer) {
+        return static_cast<int>(layer->m_gameState.m_currentProgress) + static_cast<int>(Mod::get()->getSettingValue<int64_t>("macro-offset"));
+    }
+
+    bool macroPlaying(PlayLayer* layer, PlayerObject* p1) {
+        if (autoplay.macro.empty() || layer->m_isPracticeMode) {
+            return false;
+        }
+        if (autoplay.macroByX) {
+            return autoplay.macroIdx < autoplay.macro.size();
+        }
+        return macroNow(layer) < autoplay.macroUntil;
+    }
+
+    // the game's own button path (handleButton), as macro bots press
+    void macroPress(PlayLayer* layer, bool down) {
+        if (buf.appliedInput == down) {
+            return;
+        }
+        buf.injecting = true;
+        buf.appliedInput = down;
+        layer->handleButton(down, 1, true);
+        buf.injecting = false;
+        ++autoplay.inputs;
+        autoplay.attemptFlips.push_back({ autoplay.attemptTick, down });
+    }
+
+    // at the start of each game step, before the players move
+    void macroStep(PlayLayer* layer) {
+        if (!autoplay.active || autoplay.layer != layer || autoplay.macro.empty() || layer->m_isPracticeMode || buf.simulating) {
+            return;
+        }
+        auto* p1 = layer->m_player1;
+        if (!p1 || p1->m_isDead || (autoplay.takeOver && tickCount < autoplay.userUntil)) {
+            return;
+        }
+        int now = macroNow(layer);
+        float px = p1->getPositionX();
+        // the macro picks up where the attempt is: by step from the level's start, by x from a start pos
+        if (autoplay.macroSyncedFor != autoplay.attemptNo) {
+            autoplay.macroSyncedFor = autoplay.attemptNo;
+            size_t idx = 0;
+            while (idx < autoplay.macro.size() && (autoplay.macroByX ? autoplay.macroX[idx] <= px : autoplay.macro[idx].first < now)) {
+                ++idx;
+            }
+            autoplay.macroIdx = idx;
+            autoplay.macroLogged = false;
+            macroPress(layer, idx > 0 && autoplay.macro[idx - 1].second);
+            say("autoplay: playing the macro {} (it comes first) from {}", autoplay.fromMacro,
+                autoplay.macroByX ? fmt::format("x {:.0f}", px) : fmt::format("step {}", now));
+        }
+        if (!autoplay.macroByX && now >= autoplay.macroUntil) {
+            return;
+        }
+        while (autoplay.macroIdx < autoplay.macro.size() &&
+               (autoplay.macroByX ? autoplay.macroX[autoplay.macroIdx] <= px : autoplay.macro[autoplay.macroIdx].first <= now)) {
+            if (!autoplay.macroLogged) {
+                autoplay.macroLogged = true;
+                say("macro: an input for step {} went in at step {} (x {:.1f})", autoplay.macro[autoplay.macroIdx].first, now, px);
+            }
+            macroPress(layer, autoplay.macro[autoplay.macroIdx].second);
+            ++autoplay.macroIdx;
+        }
+    }
+
     void autoplayTick(PlayLayer* layer, PlayerObject* p1) {
         if (!autoplay.active || autoplay.layer != layer || p1->m_isDead || !buf.ghost1 || buf.owner != layer) {
             return;
@@ -7870,46 +7936,11 @@ namespace {
         // Only a whole level learned to the end is replayed.
         // test 70: a macro: played by the game's step counter from the start of the attempt, the way
         // bots play it, up to where it keeps dying (then the route plans from there)
-        // test 71: also in an attempt autoplay was started in the middle of (test 70 skipped those, so
-        // your own autoplay played first): the step counter counts from the attempt's start anyway, so
-        // the macro picks up where the attempt is. From a start position: by x, from its position records
-        if (!autoplay.macro.empty() && !layer->m_isPracticeMode) {
-            int now = static_cast<int>(layer->m_gameState.m_currentProgress) + static_cast<int>(Mod::get()->getSettingValue<int64_t>("macro-offset"));
-            float px = p1->getPositionX();
-            if (autoplay.macroSyncedFor != autoplay.attemptNo) {
-                autoplay.macroSyncedFor = autoplay.attemptNo;
-                size_t idx = 0;
-                while (idx < autoplay.macro.size() && (autoplay.macroByX ? autoplay.macroX[idx] <= px : autoplay.macro[idx].first < now)) {
-                    ++idx;
-                }
-                autoplay.macroIdx = idx;
-                autoplaySet(layer, idx > 0 && autoplay.macro[idx - 1].second);
-                say("autoplay: playing the macro {} (it comes first) from {}", autoplay.fromMacro,
-                    autoplay.macroByX ? fmt::format("x {:.0f}", px) : fmt::format("step {}", now));
-            }
-            if (autoplay.macroByX) {
-                bool any = false;
-                while (autoplay.macroIdx < autoplay.macro.size() && autoplay.macroX[autoplay.macroIdx] <= px) {
-                    autoplaySet(layer, autoplay.macro[autoplay.macroIdx].second);
-                    ++autoplay.macroIdx;
-                    any = true;
-                }
-                (void)any;
-                if (autoplay.macroIdx < autoplay.macro.size()) {
-                    return;
-                }
-            }
-            else if (now < autoplay.macroUntil) {
-                while (autoplay.macroIdx < autoplay.macro.size() && autoplay.macro[autoplay.macroIdx].first <= now) {
-                    if (!autoplay.macroLogged) {
-                        autoplay.macroLogged = true;
-                        say("macro: its first input (step {}) went in at step {} (attempt tick {})", autoplay.macro[autoplay.macroIdx].first, now, at);
-                    }
-                    autoplaySet(layer, autoplay.macro[autoplay.macroIdx].second);
-                    ++autoplay.macroIdx;
-                }
-                return;
-            }
+        // test 72: the macro is pressed at the start of the game's step (macroStep, from
+        // GJBaseGameLayer::processCommands) the way bots play macros; here autoplay just doesn't plan
+        // while the macro plays
+        if (macroPlaying(layer, p1)) {
+            return;
         }
         bool replayOk = autoplay.macro.empty();  // test 43: back on, up to 3 s before the last death (see autoplayDied); test 70: not with a macro
         if (replayOk && !layer->m_isPracticeMode && !autoplay.userTouched && at < autoplay.knownUntil) {
@@ -11006,6 +11037,14 @@ static bool tpsDriving = false;
 static double tpsCarry = 0.0;
 
 class $modify(BufBaseGameLayer, GJBaseGameLayer) {
+    // test 72: macro inputs go in here, at the start of the step, the way bots press them
+    void processCommands(float dt, bool isHalfTick, bool isLastTick) {
+        if (autoplay.active && !buf.simulating && static_cast<GJBaseGameLayer*>(autoplay.layer) == static_cast<GJBaseGameLayer*>(this)) {
+            macroStep(autoplay.layer);
+        }
+        GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
+    }
+
     void update(float dt) {
         int tps = static_cast<int>(Mod::get()->getSettingValue<int64_t>("tps"));
         // v3.0 test 14: while autoplay plays, physics steps are exactly 1/240 s even at the normal
