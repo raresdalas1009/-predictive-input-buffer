@@ -48,6 +48,8 @@
 #include <complex>
 #include <deque>
 #include <filesystem>
+#include <cstring>
+#include <optional>
 #include <functional>
 #include <fstream>
 #include <sstream>
@@ -4953,6 +4955,7 @@ namespace {
         std::vector<CCPoint> attemptTrail;
         std::vector<CCPoint> knownTrail;
         bool knowsWholeLevel = false;
+        std::string fromMacro;  // test 67: the macro file autoplay replays (empty = its own memory)
         std::vector<int> deathTicks;  // where this session's attempts ended (learning backs off at repeats)
         // v3.0 test 51: the attempt that got furthest; the next one replays it to just before its end
         int bestReached = -1;
@@ -5058,7 +5061,260 @@ namespace {
         }
     }
 
+    // ===== test 67: macros =====
+    // A GD bot macro (GDR, the format most 2.2 bots save: .gdr is MessagePack, .gdr.json / .json is
+    // JSON) in the mod's "macros" folder, made for this level, becomes what autoplay replays: it plays
+    // it input by input from the start, and where it dies it learns from there like after any death
+    // (the replay is kept up to just before, the route plans the rest). Player 1's jump only; not from
+    // a start position (the macro's ticks count from the level's start).
+
+    // a small MessagePack reader (only what GDR files use) into matjson
+    struct MsgPack {
+        std::vector<uint8_t> const& d;
+        size_t p = 0;
+        bool bad = false;
+
+        uint64_t be(int n) {
+            if (p + n > d.size()) {
+                bad = true;
+                return 0;
+            }
+            uint64_t v = 0;
+            for (int i = 0; i < n; ++i) {
+                v = (v << 8) | d[p++];
+            }
+            return v;
+        }
+
+        std::string str(size_t n) {
+            if (p + n > d.size()) {
+                bad = true;
+                return "";
+            }
+            std::string s(reinterpret_cast<char const*>(d.data() + p), n);
+            p += n;
+            return s;
+        }
+
+        matjson::Value arr(size_t n, int depth) {
+            auto a = matjson::Value::array();
+            for (size_t i = 0; i < n && !bad; ++i) {
+                a.push(read(depth + 1));
+            }
+            return a;
+        }
+
+        matjson::Value map(size_t n, int depth) {
+            auto o = matjson::Value::object();
+            for (size_t i = 0; i < n && !bad; ++i) {
+                auto k = read(depth + 1);
+                auto v = read(depth + 1);
+                o[k.isString() ? k.asString().unwrapOr("") : k.dump()] = v;
+            }
+            return o;
+        }
+
+        matjson::Value read(int depth = 0) {
+            if (bad || depth > 64 || p >= d.size()) {
+                bad = true;
+                return nullptr;
+            }
+            uint8_t t = d[p++];
+            if (t <= 0x7f) return static_cast<int64_t>(t);
+            if (t >= 0xe0) return static_cast<int64_t>(static_cast<int8_t>(t));
+            if ((t & 0xf0) == 0x80) return map(t & 0x0f, depth);
+            if ((t & 0xf0) == 0x90) return arr(t & 0x0f, depth);
+            if ((t & 0xe0) == 0xa0) return str(t & 0x1f);
+            switch (t) {
+                case 0xc0: return nullptr;
+                case 0xc2: return false;
+                case 0xc3: return true;
+                case 0xc4: p += be(1); return nullptr;
+                case 0xc5: p += be(2); return nullptr;
+                case 0xc6: p += be(4); return nullptr;
+                case 0xca: { uint32_t u = static_cast<uint32_t>(be(4)); float f; std::memcpy(&f, &u, 4); return static_cast<double>(f); }
+                case 0xcb: { uint64_t u = be(8); double f; std::memcpy(&f, &u, 8); return f; }
+                case 0xcc: return static_cast<int64_t>(be(1));
+                case 0xcd: return static_cast<int64_t>(be(2));
+                case 0xce: return static_cast<int64_t>(be(4));
+                case 0xcf: return static_cast<int64_t>(be(8));
+                case 0xd0: return static_cast<int64_t>(static_cast<int8_t>(be(1)));
+                case 0xd1: return static_cast<int64_t>(static_cast<int16_t>(be(2)));
+                case 0xd2: return static_cast<int64_t>(static_cast<int32_t>(be(4)));
+                case 0xd3: return static_cast<int64_t>(be(8));
+                case 0xd9: return str(be(1));
+                case 0xda: return str(be(2));
+                case 0xdb: return str(be(4));
+                case 0xdc: return arr(be(2), depth);
+                case 0xdd: return arr(be(4), depth);
+                case 0xde: return map(be(2), depth);
+                case 0xdf: return map(be(4), depth);
+                case 0xd4: p += 2; return nullptr;
+                case 0xd5: p += 3; return nullptr;
+                case 0xd6: p += 5; return nullptr;
+                case 0xd7: p += 9; return nullptr;
+                case 0xd8: p += 17; return nullptr;
+                case 0xc7: { auto n = be(1); p += 1 + n; return nullptr; }
+                case 0xc8: { auto n = be(2); p += 1 + n; return nullptr; }
+                case 0xc9: { auto n = be(4); p += 1 + n; return nullptr; }
+                default: bad = true; return nullptr;
+            }
+        }
+    };
+
+    std::filesystem::path macroDir() {
+        return Mod::get()->getConfigDir() / "macros";
+    }
+
+    struct Macro {
+        std::string file, author, bot;
+        double fps = 240.0;
+        int levelId = 0;
+        std::vector<std::pair<int, bool>> inputs;  // (macro frame, down) for player 1's jump
+        int lastFrame = 0;
+    };
+
+    std::optional<Macro> readMacro(std::filesystem::path const& path, std::string& why) {
+        std::ifstream f(path, std::ios::binary);
+        std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        if (data.empty()) {
+            why = "empty file";
+            return std::nullopt;
+        }
+        matjson::Value j;
+        if (data[0] == '{') {
+            auto parsed = matjson::parse(std::string_view(reinterpret_cast<char const*>(data.data()), data.size()));
+            if (parsed.isErr()) {
+                why = "not valid JSON";
+                return std::nullopt;
+            }
+            j = parsed.unwrap();
+        }
+        else if (data.size() > 3 && data[0] == 'G' && data[1] == 'D' && data[2] == 'R') {
+            why = "a GDR2 file (not supported yet: save it as GDR / .gdr.json)";
+            return std::nullopt;
+        }
+        else {
+            MsgPack mp { data };
+            j = mp.read();
+            if (mp.bad || !j.isObject()) {
+                why = "not a GDR macro";
+                return std::nullopt;
+            }
+        }
+        Macro m;
+        m.file = path.filename().string();
+        m.author = j["author"].asString().unwrapOr("");
+        m.bot = j["botInfo"]["name"].asString().unwrapOr("");
+        m.fps = j["framerate"].asDouble().unwrapOr(240.0);
+        if (!(m.fps >= 30.0 && m.fps <= 100000.0)) {
+            m.fps = 240.0;
+        }
+        m.levelId = static_cast<int>(j["levelInfo"]["id"].asInt().unwrapOr(0));
+        if (j["platformer"].asBool().unwrapOr(false)) {
+            why = "a platformer macro";
+            return std::nullopt;
+        }
+        if (!j["inputs"].isArray()) {
+            why = "no inputs in it";
+            return std::nullopt;
+        }
+        for (auto const& in : j["inputs"]) {
+            int btn = static_cast<int>(in["btn"].asInt().unwrapOr(1));
+            bool p2 = in["2p"].asBool().unwrapOr(false);
+            if (btn != 1 || p2) {
+                continue;
+            }
+            int frame = static_cast<int>(in["frame"].asInt().unwrapOr(-1));
+            if (frame < 0) {
+                continue;
+            }
+            m.inputs.push_back({ frame, in["down"].asBool().unwrapOr(false) });
+            m.lastFrame = std::max(m.lastFrame, frame);
+        }
+        if (m.inputs.empty()) {
+            why = "no player 1 jump inputs in it";
+            return std::nullopt;
+        }
+        return m;
+    }
+
+    // the macro for this level: a file named after the level id (76962930.gdr), or any file whose
+    // level id inside matches
+    void loadMacro(PlayLayer* layer) {
+        autoplay.fromMacro.clear();
+        if (!layer->m_level || layer->m_startPosObject) {
+            return;
+        }
+        int id = layer->m_level->m_levelID.value();
+        std::error_code ec;
+        std::filesystem::create_directories(macroDir(), ec);
+        std::optional<Macro> found;
+        std::string why;
+        for (auto const& e : std::filesystem::directory_iterator(macroDir(), ec)) {
+            auto name = e.path().filename().string();
+            bool named = id > 0 && name.rfind(std::to_string(id) + ".", 0) == 0;
+            auto ext = e.path().extension().string();
+            if (!e.is_regular_file() || (ext != ".gdr" && ext != ".json")) {
+                continue;
+            }
+            std::string err;
+            auto m = readMacro(e.path(), err);
+            if (!m) {
+                if (named) {
+                    why = fmt::format("{}: {}", name, err);
+                }
+                continue;
+            }
+            if (named || (id > 0 && m->levelId == id)) {
+                found = std::move(m);
+                break;
+            }
+        }
+        if (!found) {
+            if (!why.empty()) {
+                say("autoplay: couldn't use the macro {}", why);
+            }
+            return;
+        }
+        auto& m = *found;
+        double k = st(240) / m.fps;
+        std::vector<std::pair<int, bool>> ticks;
+        int lastTick = -1;
+        bool held = false;
+        for (auto const& [frame, down] : m.inputs) {
+            if (down == held) {
+                continue;  // a repeat of the same state changes nothing
+            }
+            int t = static_cast<int>(std::llround(frame * k));
+            // two changes on one tick (a 1-tick tap): the second goes on the next tick
+            t = std::max(t, lastTick + 1);
+            ticks.push_back({ t, down });
+            lastTick = t;
+            held = down;
+        }
+        int until = static_cast<int>(std::llround(m.lastFrame * k)) + st(60);
+        if (until <= autoplay.knownUntil) {
+            say("autoplay: the macro {} is shorter than what it already learned here, it keeps its own", m.file);
+            return;
+        }
+        autoplay.known = ticks;
+        autoplay.knownUntil = until;
+        autoplay.knownTrail.clear();
+        autoplay.knowsWholeLevel = false;
+        autoplay.fromMacro = m.file;
+        say("autoplay: plays the macro {}{}{} ({} inputs, {:.1f} s{})", m.file, m.author.empty() ? "" : " by " + m.author,
+            m.bot.empty() ? "" : " (" + m.bot + ")", ticks.size(), until / static_cast<double>(st(240)),
+            std::abs(m.fps - st(240)) > 0.5 ? fmt::format(", made at {:.0f} TPS, you're at {}", m.fps, st(240)) : "");
+    }
+
+    void loadAutoplaySaved(PlayLayer* layer);
     void loadAutoplay(PlayLayer* layer) {
+        loadAutoplaySaved(layer);
+        loadMacro(layer);
+    }
+
+    void loadAutoplaySaved(PlayLayer* layer) {
         autoplayKey(layer);
         if (autoplay.saveKey.empty()) {
             return;
@@ -7945,7 +8201,7 @@ private:
     bool m_wiping = false;
     static inline bool s_sideOut = false;
     static constexpr float PW = 150.f;
-    static constexpr float PH = 168.f;
+    static constexpr float PH = 192.f;
 
     static constexpr int TPS_MIN = 240;
     static constexpr int TPS_MAX = 1000;
@@ -8821,7 +9077,8 @@ private:
         if (want) {
             label(side, fmt::format("{} inputs played", autoplay.inputs), 0.36f, m_muted, { 10.f, y0 + PH - 30.f }, { 0.f, 0.5f })
                 ->limitLabelWidth(PW - 20.f, 0.36f, 0.15f);
-            label(side, "AUTOPLAY stays on screen", 0.32f, m_muted, { 10.f, y0 + PH - 42.f }, { 0.f, 0.5f })
+            label(side, autoplay.fromMacro.empty() ? std::string("AUTOPLAY stays on screen") : "macro: " + autoplay.fromMacro, 0.32f,
+                autoplay.fromMacro.empty() ? m_muted : m_cyan, { 10.f, y0 + PH - 42.f }, { 0.f, 0.5f })
                 ->limitLabelWidth(PW - 20.f, 0.32f, 0.15f);
             auto* menu = CCMenu::create();
             menu->setPosition({ 0.f, 0.f });
@@ -8831,6 +9088,7 @@ private:
                 false, 0, 18.f, take ? std::optional<ccColor3B>(ccColor3B { 80, 200, 120 }) : std::nullopt);
             button(menu, "Forget Level", menu_selector(BufferMenu::onForget), { PW / 2.f, y0 + PH - 90.f }, PW - 20.f);
             button(menu, "Show On Screen", menu_selector(BufferMenu::onConsole), { PW / 2.f, y0 + PH - 114.f }, PW - 20.f);
+            button(menu, "Macros Folder", menu_selector(BufferMenu::onMacros), { PW / 2.f, y0 + PH - 138.f }, PW - 20.f);
             button(menu, "Stop Autoplay", menu_selector(BufferMenu::onAutoplay), { PW / 2.f, y0 + 18.f }, PW - 20.f, false, 0, 20.f,
                 ccColor3B { 235, 80, 90 });
             side->setPositionX(was ? outX : inX);
@@ -9159,6 +9417,13 @@ private:
         refreshPanel();
         say("console {}", buf.panelOpen ? "shown" : "hidden");
         rebuildPage();
+    }
+
+    // test 67: where to put a level's GDR macro
+    void onMacros(CCObject*) {
+        std::error_code ec;
+        std::filesystem::create_directories(macroDir(), ec);
+        file::openFolder(macroDir());
     }
 
     void onTakeOver(CCObject*) {
