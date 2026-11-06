@@ -5436,7 +5436,7 @@ namespace {
         autoplay.macroInGap = false;
         autoplay.macroTry = 0;
         autoplay.macroTuned = false;
-        autoplay.macroAutoOffset = 0;
+        autoplay.macroAutoOffset = 1;  // test 83: the first shift tried (MACRO_OFFSETS[0])
         autoplay.macroReach = { -1, -1, -1, -1, -1 };
         autoplay.known.clear();
         autoplay.knownUntil = 0;
@@ -6225,7 +6225,8 @@ namespace {
     }
 
     // a death: keep this attempt's inputs up to a bit before it (normal mode, bot-only attempts)
-    constexpr int MACRO_OFFSETS[5] = { 0, 1, -1, 2, -2 };  // test 79
+    // test 79; test 83: +1 first (Zodiac, Tidal Wave (iCreate) and Thinking Space II (xdBot) all lined up at +1)
+    constexpr int MACRO_OFFSETS[5] = { 1, 0, -1, 2, -2 };
     int macroNow(PlayLayer* layer);
     void autoplayDied(PlayLayer* layer) {
         if (layer->m_isPracticeMode || (autoplay.userTouched && autoplay.macro.empty())) {
