@@ -5381,11 +5381,13 @@ namespace {
             }
         }
         std::stable_sort(all.begin(), all.end(), [](auto const& a, auto const& b) { return std::get<0>(a) < std::get<0>(b); });
+        // test 80: each press or release counts as it comes, from either side (test 70 held while
+        // either side held: a "player 1" release inside a "player 2" hold, which the game lets go on,
+        // was skipped: Zodiac's robot at 9.6% held from step 5984 to 6039 instead of 5984-6011, 6031-6039)
         std::vector<std::pair<int, bool>> merged;
-        bool a = false, b = false;
         for (auto const& [f, d, which] : all) {
-            (which ? b : a) = d;
-            merged.push_back({ f, a || b });
+            (void)which;
+            merged.push_back({ f, d });
         }
         std::vector<std::pair<int, bool>> ticks;
         int lastTick = -1;
