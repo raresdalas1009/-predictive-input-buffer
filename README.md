@@ -5,6 +5,13 @@
 
 Practice use only; do not use for verified or leaderboard runs.
 
+## v3.0
+- **Autoplay** (for showcases, test mode: nothing is saved as progress and AUTOPLAY stays on screen): plans a route up to 10 s ahead while it plays, a pathfinder for wave and ship, and it learns from its deaths.
+- **Macros**: autoplay plays GD Replay (GDR) macros: your own in the Macros Folder, or one it downloads from [Hyperbolus](https://hyperbolus.net) (used with its owner's permission, every macro credited). It lines the macro up by itself, keeps you on its path with the bot's position records, plans the parts a macro dies in, and plays 2-player levels with each player's clicks.
+- **Global brain**: a run autoplay finishes is shared, and every game's autoplay can play the runs others finished.
+- **New window**: animations, an autoplay panel, an Account tab, and updates from the Click Before Frames site.
+- **Online** (each can be turned off in the settings): an anonymous id with your device type and version every 90 s (the online counter), autoplay's finished runs (the level and the button presses), and linking the game to your Discord on the site. Autoplay and updates need the game linked to Discord.
+
 ## v2.4 options (mod settings)
 - Wave auto-release (practice only, off by default): lets go for you when holding would crash within the window and letting go survives.
 - Orbs: also try the other choice: if a prediction dies after touching an orb, it is retried with the opposite click/skip choice.
@@ -89,3 +96,4 @@ Practice use only; do not use for verified or leaderboard runs.
 - v2.99.3: iOS/macOS: one orb hook was too short to patch safely on Apple chips and corrupted the next game function, so it is skipped there (orbs still wait for the real press); one more startup checkpoint in the log.
 - v2.99.4: iOS: the purple heart button in the pause menu was missing (the game builds the pause menu differently on iOS), it is now also added when the game pauses.
 - v2.99.5: iOS without JIT works: 8 ghost-visual hooks that crashed the no-JIT launcher on the loading screen are left out on iOS (no effect on buffering; other platforms unchanged).
+- v3.0.0: autoplay (route planner, pathfinder, macros from your folder or Hyperbolus, the global brain, 2-player levels), a new animated window with an Account tab linked to Discord, an online counter, updates from the Click Before Frames site, and lighter FPS.
