@@ -4967,6 +4967,8 @@ namespace {
         bool macroByX = false;
         bool macroLogged = false;
         std::vector<int> macroDeaths;
+        std::vector<std::pair<int, int>> macroGaps;  // test 75: stretches autoplay plays itself, the macro the rest
+        bool macroInGap = false;
         std::vector<int> deathTicks;  // where this session's attempts ended (learning backs off at repeats)
         // v3.0 test 51: the attempt that got furthest; the next one replays it to just before its end
         int bestReached = -1;
@@ -5405,6 +5407,8 @@ namespace {
         autoplay.macroIdx = 0;
         autoplay.macroArmed = autoplay.attemptTick <= 1;
         autoplay.macroDeaths.clear();
+        autoplay.macroGaps.clear();
+        autoplay.macroInGap = false;
         autoplay.known.clear();
         autoplay.knownUntil = 0;
         autoplay.knownTrail.clear();
@@ -6117,8 +6121,21 @@ namespace {
                     }
                 }
                 if (here >= 2) {
-                    autoplay.macroUntil = std::max(0, std::min(autoplay.macroUntil, reached - st(120)));
-                    say("autoplay: the macro died at step {} again: it's played up to step {}, then autoplay plans", reached, autoplay.macroUntil);
+                    // test 75 (like Nova): autoplay plans a stretch around it, the macro plays on after it
+                    bool grown = false;
+                    for (auto& g : autoplay.macroGaps) {
+                        if (reached >= g.first - st(60) && reached < g.second + st(60)) {
+                            g.first = std::max(0, std::min(g.first, reached - st(180)));
+                            g.second = std::max(g.second + st(120), reached + st(240));
+                            grown = true;
+                            say("autoplay: died in the stretch it plans itself (step {}): it's now steps {}-{}", reached, g.first, g.second);
+                        }
+                    }
+                    if (!grown) {
+                        autoplay.macroGaps.push_back({ std::max(0, reached - st(120)), reached + st(240) });
+                        say("autoplay: the macro died at step {} again: autoplay plans steps {}-{}, the macro plays the rest", reached,
+                            std::max(0, reached - st(120)), reached + st(240));
+                    }
                 }
                 else {
                     say("autoplay: the macro died at step {} ({:.0f}% of it), it plays it again", reached,
@@ -7878,6 +7895,15 @@ namespace {
         return !layer->m_startPosObject || autoplay.macroByX;
     }
 
+    bool macroGapAt(int step) {
+        for (auto const& [a, b] : autoplay.macroGaps) {
+            if (step >= a && step < b) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool macroPlaying(PlayLayer* layer, PlayerObject* p1) {
         if (!macroUsable(layer)) {
             return false;
@@ -7885,7 +7911,26 @@ namespace {
         if (autoplay.macroByX) {
             return autoplay.macroIdx < autoplay.macro.size();
         }
-        return macroNow(layer) < autoplay.macroUntil;
+        int now = macroNow(layer);
+        bool gap = macroGapAt(now);
+        if (gap != autoplay.macroInGap) {
+            autoplay.macroInGap = gap;
+            if (gap) {
+                routeReset();  // autoplay plans this stretch from where you are
+                say("autoplay: plans the stretch the macro dies in (from step {})", now);
+            }
+            else {
+                // back to the macro: its button as it has it here
+                size_t idx = 0;
+                while (idx < autoplay.macro.size() && autoplay.macro[idx].first < now) {
+                    ++idx;
+                }
+                autoplay.macroIdx = idx;
+                autoplaySet(layer, idx > 0 && autoplay.macro[idx - 1].second);
+                say("autoplay: back to the macro at step {}", now);
+            }
+        }
+        return !gap && now < autoplay.macroEnd;
     }
 
     // the game's own button path (handleButton), as macro bots press
@@ -7936,8 +7981,11 @@ namespace {
             say("autoplay: playing the macro {} (it comes first) from {}", autoplay.fromMacro,
                 autoplay.macroByX ? fmt::format("x {:.0f}", px) : fmt::format("step {}", now));
         }
-        if (!autoplay.macroByX && now >= autoplay.macroUntil) {
+        if (!autoplay.macroByX && (now >= autoplay.macroEnd || macroGapAt(now))) {
             return;
+        }
+        if (!autoplay.macroByX && autoplay.macroInGap) {
+            return;  // leaving a gap is handled once a step in macroPlaying
         }
         while (autoplay.macroIdx < autoplay.macro.size() &&
                (autoplay.macroByX ? autoplay.macroX[autoplay.macroIdx] <= px : autoplay.macro[autoplay.macroIdx].first <= now)) {
