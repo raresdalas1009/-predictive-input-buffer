@@ -6,7 +6,7 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"version": "v3.0.0-alpha.89",
+	"version": "v3.0.0-alpha.90",
 	"id": "basu.input-buffer",
 	"name": "Click Before Frames",
 	"developer": "BASU",
@@ -400,6 +400,12 @@
 			"default": 0,
 			"min": -5,
 			"max": 5
+		},
+		"global-brain": {
+			"type": "bool",
+			"name": "Global Brain",
+			"description": "When autoplay finishes a level from its start, the run is shared with the Click Before Frames server (the level, its exact version, your TPS and the button presses; nothing about you), and autoplay plays runs other games finished before looking on Hyperbolus. Off: nothing is sent or used.",
+			"default": true
 		},
 		"online-players": {
 			"type": "bool",

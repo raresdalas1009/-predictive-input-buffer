@@ -4909,6 +4909,88 @@ namespace {
     // the mod presses / lets go only when keeping the button as it is would crash sooner than
     // switching. The level is put in test mode, so the game saves nothing it plays; your own
     // clicks are ignored while it runs, and AUTOPLAY stays on screen.
+// test 66: online players. Every 90 s (setting "Show Online Players") the game sends the CBF server
+// an anonymous random id, its platform and the mod's version, nothing else; the server answers with
+// how many are online and offline, shown in the window's footer. The server's code is in web/.
+namespace online {
+    // the worker's address once it's deployed (web/README.md); empty = nothing is sent
+    constexpr char const* URL = "https://clickbeforeframes.j6m7hh99sg.workers.dev";
+    std::atomic<int> nowOnline { -1 };
+    std::atomic<int> nowOffline { -1 };
+    bool started = false;
+
+    std::string id() {
+        auto saved = Mod::get()->getSavedValue<std::string>("online-id", "");
+        if (saved.size() == 32) {
+            return saved;
+        }
+        std::random_device rd;
+        std::string made;
+        for (int i = 0; i < 32; ++i) {
+            made += "0123456789abcdef"[rd() % 16];
+        }
+        Mod::get()->setSavedValue("online-id", made);
+        return made;
+    }
+
+    char const* platform() {
+#if defined(GEODE_IS_WINDOWS)
+        return "Windows";
+#elif defined(GEODE_IS_ANDROID)
+        return "Android";
+#elif defined(GEODE_IS_IOS)
+        return "iOS";
+#elif defined(GEODE_IS_MACOS)
+        return "macOS";
+#else
+        return "Other";
+#endif
+    }
+
+    void start() {
+        if (started || std::string_view(URL).empty()) {
+            return;
+        }
+        started = true;
+        std::string body = fmt::format(R"({{"id":"{}","platform":"{}","version":"{}"}})", id(), platform(),
+            Mod::get()->getVersion().toVString());
+        std::thread([body] {
+            while (true) {
+                if (Mod::get()->getSettingValue<bool>("online-players")) {
+                    auto res = web::WebRequest()
+                        .timeout(std::chrono::seconds(10))
+                        .userAgent("ClickBeforeFrames")
+                        .header("Content-Type", "application/json")
+                        .bodyString(body)
+                        .postSync(std::string(URL) + "/api/ping");
+                    if (res.ok()) {
+                        if (auto json = res.json(); json.isOk()) {
+                            nowOnline = static_cast<int>(json.unwrap()["online"].asInt().unwrapOr(-1));
+                            nowOffline = static_cast<int>(json.unwrap()["offline"].asInt().unwrapOr(-1));
+                        }
+                    }
+                }
+                else {
+                    nowOnline = nowOffline = -1;
+                }
+                std::this_thread::sleep_for(std::chrono::seconds(90));
+            }
+        }).detach();
+    }
+
+    std::string text() {
+        int on = nowOnline, off = nowOffline;
+        if (on < 0) {
+            return "";
+        }
+        return fmt::format("{} online  ·  {} offline", on, off);
+    }
+}
+
+    void manualUpdate();
+    std::string updateButtonText();
+    bool updateAvailable();
+
     // test 89: a bot's position record for one frame (player 1, and player 2 if it has one)
     struct MacroFix {
         int frame = 0;
@@ -4985,6 +5067,11 @@ namespace {
         std::vector<int> macroDeaths;
         std::vector<std::pair<int, int>> macroGaps;  // test 75: stretches autoplay plays itself, the macro the rest
         bool macroInGap = false;
+        // test 90: the global brain: this attempt's button changes by the game's step (to share a finished
+        // run), the level's fingerprint, and whether the macro is a shared run
+        std::vector<std::pair<int, bool>> runFlips;
+        std::string levelPrint;
+        bool macroIsBrain = false;
         std::vector<MacroFix> macroFixes;  // test 89: frames converted to steps
         int macroFixCount = 0;
         float macroFixMax = 0.f;
@@ -5348,6 +5435,7 @@ namespace {
     // level id inside matches
     void loadMacro(PlayLayer* layer) {
         autoplay.fromMacro.clear();
+        autoplay.macroIsBrain = false;
         autoplay.macro.clear();
         autoplay.macroUntil = autoplay.macroEnd = 0;
         autoplay.macroLogged = false;
@@ -5383,7 +5471,14 @@ namespace {
             if (!why.empty()) {
                 say("autoplay: couldn't use the macro {}", why);
             }
-            fetchOnlineMacro(id);
+            // test 90: the global brain first, then Hyperbolus
+            if (id > 0 && !layer->m_level->m_twoPlayerMode && !std::string_view(online::URL).empty() &&
+                Mod::get()->getSettingValue<bool>("global-brain")) {
+                brainFetch(id, levelFingerprint(layer->m_level));
+            }
+            else {
+                fetchOnlineMacro(id);
+            }
             return;
         }
         // test 77: one downloaded from Hyperbolus keeps its credit
@@ -5767,6 +5862,64 @@ namespace {
                 return tell(fmt::format("autoplay: no other Hyperbolus macro of this level to try ({} failed here before); autoplay plays it itself", skippedBad));
             }
             tell("autoplay: none of the Hyperbolus macros of this level could be used (made at another TPS, or GDR2, which isn't supported yet)");
+        }).detach();
+    }
+
+    // test 90: the run of this level finished the most times by other games' autoplay
+    void brainFetch(int levelId, std::string print) {
+        int tps = static_cast<int>(settingTps());
+        say("autoplay: asking the global brain for a run of this level...");
+        std::thread([levelId, print, tps] {
+            auto res = web::WebRequest().timeout(std::chrono::seconds(15)).userAgent("ClickBeforeFrames")
+                .getSync(fmt::format("{}/api/runs?level={}&hash={}&tps={}", online::URL, levelId, print, tps));
+            std::optional<Macro> got;
+            int confirms = 0;
+            if (res.ok()) {
+                if (auto j = res.json(); j.isOk()) {
+                    auto v = j.unwrap();
+                    if (v["found"].asBool().unwrapOr(false) && v["inputs"].isArray()) {
+                        Macro m;
+                        m.file = "global brain run";
+                        m.bot = "Click Before Frames";
+                        m.fps = tps;
+                        m.levelId = levelId;
+                        confirms = static_cast<int>(v["confirms"].asInt().unwrapOr(1));
+                        for (auto const& in : v["inputs"]) {
+                            if (in.isArray() && in.size() == 2) {
+                                int f = static_cast<int>(in[0].asInt().unwrapOr(0));
+                                m.inputs.push_back({ f, in[1].asInt().unwrapOr(0) != 0 });
+                                m.lastFrame = std::max(m.lastFrame, f);
+                            }
+                        }
+                        if (!m.inputs.empty()) {
+                            got = std::move(m);
+                        }
+                    }
+                }
+            }
+            queueInMainThread([got, confirms, levelId] {
+                auto* layer = GameManager::get()->m_playLayer;
+                bool here = autoplay.active && layer && layer->m_level && layer->m_level->m_levelID.value() == levelId;
+                if (!got) {
+                    say("autoplay: the global brain has no run of this level yet");
+                    if (here) {
+                        fetchOnlineMacro(levelId);
+                    }
+                    return;
+                }
+                if (!here) {
+                    return;
+                }
+                if (applyMacro(*got, fmt::format("global brain run ({} finish{})", confirms, confirms == 1 ? "" : "es"))) {
+                    // recorded by the same counter it's played by: no shift first
+                    autoplay.macroIsBrain = true;
+                    if (!autoplay.macroTuned) {
+                        autoplay.macroTrials = { { 0, false }, { 1, false }, { -1, false } };
+                        autoplay.macroTrialReach.assign(3, -1);
+                        autoplay.macroAutoOffset = 0;
+                    }
+                }
+            });
         }).detach();
     }
 
@@ -6292,6 +6445,66 @@ namespace {
         }
     }
 
+    // ===== test 90: the global brain =====
+    // A run autoplay finishes from the level's start (normal mode, nothing pressed by you) is sent to
+    // the CBF server: the level id, a fingerprint of the level's exact contents, the TPS, the mod
+    // version, the level name and its button changes by the game's step. Nothing about you. Another
+    // game starting autoplay there gets the run finished the most times and plays it like a macro.
+    // The same run finished again counts as a confirmation. Setting: Global Brain.
+    int progressPerStepNow();
+    void brainRecord(PlayLayer* layer, bool down) {
+        int per = progressPerStepNow();
+        int step = static_cast<int>(layer->m_gameState.m_currentProgress) / std::max(1, per);
+        if (!autoplay.runFlips.empty() && autoplay.runFlips.back().second == down) {
+            return;
+        }
+        autoplay.runFlips.push_back({ step, down });
+    }
+
+    std::string levelFingerprint(GJGameLevel* level) {
+        // FNV-1a 64 of the level's contents and version (the same on every platform)
+        uint64_t h = 1469598103934665603ull;
+        auto mix = [&](std::string const& t) {
+            for (unsigned char c : t) {
+                h ^= c;
+                h *= 1099511628211ull;
+            }
+        };
+        mix(std::string(level->m_levelString));
+        mix(fmt::format("|{}", static_cast<int>(level->m_levelVersion)));
+        return fmt::format("{:016x}", h);
+    }
+
+    void brainUpload(PlayLayer* layer) {
+        if (std::string_view(online::URL).empty() || !Mod::get()->getSettingValue<bool>("global-brain") || !layer->m_level ||
+            layer->m_level->m_levelID.value() <= 0 || layer->m_level->m_twoPlayerMode || autoplay.runFlips.size() < 1 ||
+            autoplay.macroIsBrain) {
+            return;
+        }
+        std::string inputs;
+        for (auto const& [t, d] : autoplay.runFlips) {
+            inputs += fmt::format("{}[{},{}]", inputs.empty() ? "" : ",", t, d ? 1 : 0);
+        }
+        auto name = matjson::Value(std::string(layer->m_level->m_levelName)).dump();
+        std::string body = fmt::format(R"({{"level":{},"hash":"{}","tps":{},"name":{},"version":"{}","inputs":[{}]}})", layer->m_level->m_levelID.value(),
+            levelFingerprint(layer->m_level), static_cast<int>(settingTps()), name, Mod::get()->getVersion().toVString(), inputs);
+        size_t n = autoplay.runFlips.size();
+        std::thread([body, n] {
+            auto res = web::WebRequest().timeout(std::chrono::seconds(20)).userAgent("ClickBeforeFrames").header("Content-Type", "application/json")
+                .bodyString(body).postSync(std::string(online::URL) + "/api/runs");
+            bool confirmed = res.ok() && res.string().unwrapOr("").find("\"confirmed\":true") != std::string::npos;
+            queueInMainThread([ok = res.ok(), confirmed, n] {
+                say("autoplay: {}", !ok ? std::string("couldn't share the run with the global brain") :
+                    confirmed ? fmt::format("the run ({} inputs) was already in the global brain: it counts as one more finish", n)
+                              : fmt::format("the run ({} inputs) is shared with the global brain: every game's autoplay can play it now", n));
+            });
+        }).detach();
+    }
+
+    void fetchOnlineMacro(int levelId);
+    bool applyMacro(struct Macro const& m, std::string const& credit);
+    void brainFetch(int levelId, std::string print);
+
     void autoplaySet(PlayLayer* layer, bool down) {
         if (buf.appliedInput == down) {
             return;
@@ -6299,6 +6512,7 @@ namespace {
         autoplayButton(layer, down);
         ++autoplay.inputs;
         autoplay.attemptFlips.push_back({ autoplay.attemptTick - 1, down });
+        brainRecord(layer, down);
     }
 
     void autoplayFlip(PlayLayer* layer) {
@@ -6339,6 +6553,7 @@ namespace {
         autoplay.macroIdx = 0;
         autoplay.macroArmed = !autoplay.macro.empty();
         ++autoplay.attemptNo;
+        autoplay.runFlips.clear();  // test 90
         autoplay.userTouched = false;
         autoplay.diedThisAttempt = false;
         autoplay.reports = 0;
@@ -6529,6 +6744,9 @@ namespace {
         saveAutoplay();
         drawTrail();
         say("autoplay finished the level: the whole run is saved, it plays it the same from the first attempt next time");
+        if (!layer->m_startPosObject) {
+            brainUpload(layer);  // test 90
+        }
         if (autoplay.generating) {
             endGenerating("reached the end");
             autoplay.needRestart = true;  // now the run you see, along the trail
@@ -8182,6 +8400,9 @@ namespace {
     // step is the counter divided by that
     int progressPerStep = 0;
     int lastProgress = -1;
+    int progressPerStepNow() {
+        return progressPerStep > 0 ? progressPerStep : 2;
+    }
 
     void measureProgress(PlayLayer* layer) {
         int p = static_cast<int>(layer->m_gameState.m_currentProgress);
@@ -8273,6 +8494,7 @@ namespace {
         buf.injecting = false;
         ++autoplay.inputs;
         autoplay.attemptFlips.push_back({ autoplay.attemptTick, down });
+        brainRecord(layer, down);
     }
 
     void macroApplyFix(PlayLayer* layer, PlayerObject* p1, int now);
@@ -8817,84 +9039,6 @@ namespace {
         if (buf.queue.empty()) {
             buf.shift = 0;
         }
-    }
-}
-
-// test 66: online players. Every 90 s (setting "Show Online Players") the game sends the CBF server
-// an anonymous random id, its platform and the mod's version, nothing else; the server answers with
-// how many are online and offline, shown in the window's footer. The server's code is in web/.
-namespace online {
-    // the worker's address once it's deployed (web/README.md); empty = nothing is sent
-    constexpr char const* URL = "https://clickbeforeframes.j6m7hh99sg.workers.dev";
-    std::atomic<int> nowOnline { -1 };
-    std::atomic<int> nowOffline { -1 };
-    bool started = false;
-
-    std::string id() {
-        auto saved = Mod::get()->getSavedValue<std::string>("online-id", "");
-        if (saved.size() == 32) {
-            return saved;
-        }
-        std::random_device rd;
-        std::string made;
-        for (int i = 0; i < 32; ++i) {
-            made += "0123456789abcdef"[rd() % 16];
-        }
-        Mod::get()->setSavedValue("online-id", made);
-        return made;
-    }
-
-    char const* platform() {
-#if defined(GEODE_IS_WINDOWS)
-        return "Windows";
-#elif defined(GEODE_IS_ANDROID)
-        return "Android";
-#elif defined(GEODE_IS_IOS)
-        return "iOS";
-#elif defined(GEODE_IS_MACOS)
-        return "macOS";
-#else
-        return "Other";
-#endif
-    }
-
-    void start() {
-        if (started || std::string_view(URL).empty()) {
-            return;
-        }
-        started = true;
-        std::string body = fmt::format(R"({{"id":"{}","platform":"{}","version":"{}"}})", id(), platform(),
-            Mod::get()->getVersion().toVString());
-        std::thread([body] {
-            while (true) {
-                if (Mod::get()->getSettingValue<bool>("online-players")) {
-                    auto res = web::WebRequest()
-                        .timeout(std::chrono::seconds(10))
-                        .userAgent("ClickBeforeFrames")
-                        .header("Content-Type", "application/json")
-                        .bodyString(body)
-                        .postSync(std::string(URL) + "/api/ping");
-                    if (res.ok()) {
-                        if (auto json = res.json(); json.isOk()) {
-                            nowOnline = static_cast<int>(json.unwrap()["online"].asInt().unwrapOr(-1));
-                            nowOffline = static_cast<int>(json.unwrap()["offline"].asInt().unwrapOr(-1));
-                        }
-                    }
-                }
-                else {
-                    nowOnline = nowOffline = -1;
-                }
-                std::this_thread::sleep_for(std::chrono::seconds(90));
-            }
-        }).detach();
-    }
-
-    std::string text() {
-        int on = nowOnline, off = nowOffline;
-        if (on < 0) {
-            return "";
-        }
-        return fmt::format("{} online  ·  {} offline", on, off);
     }
 }
 
@@ -9811,7 +9955,10 @@ private:
             optionRow(PREDICTION[i], rx + 5.f, ry, colW - 10.f, prH);
             ry -= prH;
         }
-        button(m_pageMenu, "All Geode Settings", menu_selector(BufferMenu::onAllSettings), { rx + colW / 2.f, FOOT + 18.f }, colW - 16.f);
+        // test 90: updates (from the CBF site) next to All Geode Settings
+        float hb = (colW - 22.f) / 2.f;
+        button(m_pageMenu, "All Geode Settings", menu_selector(BufferMenu::onAllSettings), { rx + 8.f + hb / 2.f, FOOT + 18.f }, hb);
+        button(m_pageMenu, updateButtonText(), menu_selector(BufferMenu::onUpdates), { rx + 14.f + hb * 1.5f, FOOT + 18.f }, hb, updateAvailable());
     }
 
     void rebuildPage() {
@@ -10274,6 +10421,12 @@ private:
         buf.panelOpen = !buf.panelOpen;
         refreshPanel();
         say("console {}", buf.panelOpen ? "shown" : "hidden");
+        rebuildPage();
+    }
+
+    // test 90: check for / install the newest version
+    void onUpdates(CCObject*) {
+        manualUpdate();
         rebuildPage();
     }
 
@@ -11299,6 +11452,8 @@ namespace {
     constexpr char const* RELEASE_API = "https://api.github.com/repos/raresdalas1009/-predictive-input-buffer/releases/latest";
     bool updating = false;
     std::string latestAssetUrl;  // v2.98: the .geode of the release the popup is about
+    std::string latestNotes;     // test 90: what's new, from the CBF site
+    bool updateAnywhere = false; // test 90: a check from the window shows its popup wherever you are
 
     // v2.98: the newest GitHub release and its .geode download (empty url if it has none)
     std::string releaseAsset(matjson::Value const& release) {
@@ -11409,8 +11564,8 @@ namespace {
         }
         updateShown = true;
         say("update: {} is out (you have {})", latestVersion, Mod::get()->getVersion().toVString());
-        createQuickPopup("Click Before Frames", fmt::format("<cp>{}</c> is out! You have {}.", latestVersion,
-            Mod::get()->getVersion().toVString()), "Later", INSTALL_UPDATES ? "Update now" : "Open page", [](FLAlertLayer*, bool yes) {
+        createQuickPopup("Click Before Frames", fmt::format("<cp>{}</c> is out! You have {}.{}", latestVersion,
+            Mod::get()->getVersion().toVString(), latestNotes.empty() ? std::string() : "\n\n" + latestNotes), "Later", INSTALL_UPDATES ? "Update now" : "Open page", [](FLAlertLayer*, bool yes) {
                 if (!yes) {
                     return;
                 }
@@ -11423,8 +11578,37 @@ namespace {
             });
     }
 
+    void checkForUpdate();
+
+    // test 90: the window's Updates button
+    bool updateAvailable() {
+        return !latestVersion.empty() && !latestAssetUrl.empty();
+    }
+
+    std::string updateButtonText() {
+        if (updating) {
+            return "Updating...";
+        }
+        return updateAvailable() ? "Update to " + latestVersion : std::string("Check for Updates");
+    }
+
+    void manualUpdate() {
+        if (updating) {
+            return;
+        }
+        if (updateAvailable()) {
+            installUpdate();
+            return;
+        }
+        updateAnywhere = true;
+        updateChecked = false;
+        updateShown = false;
+        say("update: checking...");
+        checkForUpdate();
+    }
+
     void checkForUpdate() {
-        if (updateChecked || !Mod::get()->getSettingValue<bool>("check-updates")) {
+        if (updateChecked || (!updateAnywhere && !Mod::get()->getSettingValue<bool>("check-updates"))) {
             return;
         }
         updateChecked = true;
@@ -11432,6 +11616,39 @@ namespace {
         // (it used to read the code's version, which could be ahead of the newest release: the
         // popup said "v2.97 is out" and the install then found only v2.95)
         std::thread([] {
+            // test 90: the version uploaded on the CBF site's admin page comes first (GitHub otherwise)
+            if (!std::string_view(online::URL).empty()) {
+                auto site = web::WebRequest().timeout(std::chrono::seconds(10)).userAgent("ClickBeforeFrames")
+                    .getSync(std::string(online::URL) + "/api/latest");
+                if (site.ok()) {
+                    if (auto j = site.json(); j.isOk()) {
+                        auto v = j.unwrap();
+                        auto ver = VersionInfo::parse(v["version"].asString().unwrapOr(""));
+                        if (ver.isOk() && ver.unwrap() > Mod::get()->getVersion()) {
+                            std::string name = ver.unwrap().toVString();
+                            std::string url = std::string(online::URL) + "/download/latest";
+                            std::string notes = v["notes"].asString().unwrapOr("");
+                            queueInMainThread([name, url, notes] {
+                                latestVersion = name;
+                                latestAssetUrl = url;
+                                latestNotes = notes;
+                                say("update: {} is on the CBF site{}", name, notes.empty() ? "" : ": " + notes);
+                                auto* scene = CCScene::get();
+                                if (updateAnywhere || (scene && scene->getChildByID("MenuLayer"))) {
+                                    showUpdatePopup();
+                                }
+                            });
+                            return;
+                        }
+                        if (ver.isOk()) {
+                            if (updateAnywhere) {
+                                queueInMainThread([] { say("update: you have the newest version ({})", Mod::get()->getVersion().toVString()); });
+                            }
+                            return;  // the site has nothing newer: that's the newest
+                        }
+                    }
+                }
+            }
             auto res = web::WebRequest()
                 .timeout(std::chrono::seconds(10))
                 .userAgent("ClickBeforeFrames")

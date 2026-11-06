@@ -15,8 +15,15 @@ binding = "DB"
 database_name = "cbf-online"
 database_id = "PUT-YOUR-DATABASE-ID-HERE"
 
+# the uploaded mod versions (create a KV namespace "cbf-files", bind it as FILES)
+[[kv_namespaces]]
+binding = "FILES"
+id = "PUT-YOUR-KV-ID-HERE"
+
 [vars]
 # your Discord application's client id (not secret), and your server invite (optional)
 DISCORD_CLIENT_ID = "PUT-YOUR-CLIENT-ID-HERE"
 DISCORD_INVITE = ""
+# your Discord user id: only you can upload versions on /admin
+ADMIN_DISCORD_ID = ""
 # secrets (never here): npx wrangler secret put DISCORD_CLIENT_SECRET / SESSION_SECRET

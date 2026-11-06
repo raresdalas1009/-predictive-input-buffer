@@ -140,7 +140,21 @@
     </div>
   </section>
 
-  <footer>Counts are anonymous: each game sends a random id, its device type and version every 90 seconds. Turn it off in the mod's settings.<br><span id="updated"></span></footer>
+  <section class="grid2">
+    <div class="card hero">
+      <div class="label"><span class="dot purple"></span>Autoplay brain</div>
+      <div class="big" id="beaten">–</div>
+      <div class="sub">Levels autoplay has beaten from 0% to 100%</div>
+      <div class="sub" id="runs" style="margin-top:8px">&nbsp;</div>
+    </div>
+    <div class="card">
+      <div class="head"><h2>Recently beaten</h2><span>shared runs</span></div>
+      <div class="sub">Every game's autoplay learns these runs</div>
+      <div id="recent"></div>
+    </div>
+  </section>
+
+  <footer>Counts are anonymous: each game sends a random id, its device type and version every 90 seconds, and autoplay's finished runs (the level and the button presses, nothing about you). Both can be turned off in the mod's settings.<br><span id="updated"></span></footer>
 </div>
 
 <script>
@@ -190,6 +204,10 @@
         <span><b>${fmt(v.players)}</b> player${v.players === 1 ? "" : "s"} · ${Math.round((v.players / vTotal) * 100)}% · ${fmt(v.online)} online</span></div>
         <div class="bar"><i style="width:${(v.players / vTotal) * 100}%"></i></div></div>`);
 
+      countTo(document.getElementById("beaten"), s.levelsBeaten || 0);
+      document.getElementById("runs").textContent = `${fmt(s.runsShared || 0)} runs shared · ${fmt(s.runsConfirmed || 0)} finishes`;
+      document.getElementById("recent").innerHTML = rows(s.recentBeaten || [], (r) => `
+        <div class="row"><div class="top">${esc(r.name)}<span>id ${r.id} · ${fmt(r.confirms)} finish${r.confirms === 1 ? "" : "es"}</span></div></div>`);
       const inv = document.getElementById("invite");
       if (s.discordInvite) { inv.href = s.discordInvite; inv.hidden = false; }
       document.getElementById("updated").textContent = `Updated ${new Date().toLocaleTimeString()}`;
