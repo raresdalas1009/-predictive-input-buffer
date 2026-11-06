@@ -4956,6 +4956,13 @@ namespace {
         std::vector<CCPoint> knownTrail;
         bool knowsWholeLevel = false;
         std::string fromMacro;  // test 67: the macro file autoplay replays (empty = its own memory)
+        std::vector<std::pair<int, bool>> macro;  // test 70: its inputs, by step
+        int macroUntil = 0;  // played up to here (less after it keeps dying at one spot)
+        int macroEnd = 0;
+        size_t macroIdx = 0;
+        bool macroArmed = false;  // only from the start of an attempt
+        bool macroLogged = false;
+        std::vector<int> macroDeaths;
         std::vector<int> deathTicks;  // where this session's attempts ended (learning backs off at repeats)
         // v3.0 test 51: the attempt that got furthest; the next one replays it to just before its end
         int bestReached = -1;
@@ -5171,6 +5178,7 @@ namespace {
         double fps = 240.0;
         int levelId = 0;
         std::vector<std::pair<int, bool>> inputs;  // (macro frame, down) for player 1's jump
+        std::vector<std::pair<int, bool>> inputs2;  // test 70: the same, marked as player 2's
         int lastFrame = 0;
     };
 
@@ -5239,15 +5247,22 @@ namespace {
         for (auto const& in : j["inputs"]) {
             int btn = static_cast<int>(in["btn"].asInt().unwrapOr(1));
             bool p2 = in["2p"].asBool().unwrapOr(false);
-            if (btn != 1 || p2) {
-                continue;
+            if (btn != 1) {
+                continue;  // left / right (platformer)
             }
             int frame = static_cast<int>(in["frame"].asInt().unwrapOr(-1));
             if (frame < 0) {
                 continue;
             }
-            m.inputs.push_back({ frame, in["down"].asBool().unwrapOr(false) });
+            // test 70: iCreate saves most of player 1's clicks as player 2's (Zodiac: 1078 of 1209), and
+            // outside 2-player levels both are your clicks: both are kept, joined when it's played
+            (p2 ? m.inputs2 : m.inputs).push_back({ frame, in["down"].asBool().unwrapOr(false) });
             m.lastFrame = std::max(m.lastFrame, frame);
+        }
+        std::stable_sort(m.inputs2.begin(), m.inputs2.end(), [](auto const& a, auto const& b) { return a.first < b.first; });
+        if (m.inputs.empty() && !m.inputs2.empty()) {
+            // nothing for player 1 at all: player 2's are the clicks
+            m.inputs.swap(m.inputs2);
         }
         if (m.inputs.empty()) {
             why = "no player 1 jump inputs in it";
@@ -5265,6 +5280,9 @@ namespace {
     // level id inside matches
     void loadMacro(PlayLayer* layer) {
         autoplay.fromMacro.clear();
+        autoplay.macro.clear();
+        autoplay.macroUntil = autoplay.macroEnd = 0;
+        autoplay.macroLogged = false;
         if (!layer->m_level || layer->m_startPosObject) {
             return;
         }
@@ -5305,10 +5323,30 @@ namespace {
 
     bool applyMacro(Macro const& m, std::string const& credit) {
         double k = st(240) / m.fps;
+        // test 70: outside 2-player levels the "player 2" clicks are yours too: the button is down
+        // while either is
+        auto* pl = GameManager::get()->m_playLayer;
+        bool twoPlayer = pl && pl->m_level && pl->m_level->m_twoPlayerMode;
+        std::vector<std::tuple<int, bool, bool>> all;  // frame, down, which
+        for (auto const& [f, d] : m.inputs) {
+            all.push_back({ f, d, false });
+        }
+        if (!twoPlayer) {
+            for (auto const& [f, d] : m.inputs2) {
+                all.push_back({ f, d, true });
+            }
+        }
+        std::stable_sort(all.begin(), all.end(), [](auto const& a, auto const& b) { return std::get<0>(a) < std::get<0>(b); });
+        std::vector<std::pair<int, bool>> merged;
+        bool a = false, b = false;
+        for (auto const& [f, d, which] : all) {
+            (which ? b : a) = d;
+            merged.push_back({ f, a || b });
+        }
         std::vector<std::pair<int, bool>> ticks;
         int lastTick = -1;
         bool held = false;
-        for (auto const& [frame, down] : m.inputs) {
+        for (auto const& [frame, down] : merged) {
             if (down == held) {
                 continue;  // a repeat of the same state changes nothing
             }
@@ -5324,8 +5362,17 @@ namespace {
             say("autoplay: the macro {} is shorter than what it already learned here, it keeps its own", m.file);
             return false;
         }
-        autoplay.known = ticks;
-        autoplay.knownUntil = until;
+        // test 70: the macro is kept apart from what autoplay learns (test 69 put it in its memory,
+        // and the first death replaced it with autoplay's own attempt). It's played by the game's step
+        // counter, the way bots play it, from the start of an attempt
+        autoplay.macro = ticks;
+        autoplay.macroUntil = until;
+        autoplay.macroEnd = until;
+        autoplay.macroIdx = 0;
+        autoplay.macroArmed = autoplay.attemptTick <= 1;
+        autoplay.macroDeaths.clear();
+        autoplay.known.clear();
+        autoplay.knownUntil = 0;
         autoplay.knownTrail.clear();
         autoplay.knowsWholeLevel = false;
         autoplay.fromMacro = credit.empty() ? m.file : credit;
@@ -5990,6 +6037,8 @@ namespace {
         routeReset();
         autoplay.verifyAt = -1;
         autoplay.replayIdx = 0;
+        autoplay.macroIdx = 0;
+        autoplay.macroArmed = !autoplay.macro.empty();
         autoplay.userTouched = false;
         autoplay.diedThisAttempt = false;
         autoplay.reports = 0;
@@ -5999,6 +6048,29 @@ namespace {
     // a death: keep this attempt's inputs up to a bit before it (normal mode, bot-only attempts)
     void autoplayDied(PlayLayer* layer) {
         if (layer->m_isPracticeMode || autoplay.userTouched) {
+            return;
+        }
+        // test 70: with a macro, the macro stays. Dying twice at the same spot in it: it's played up
+        // to 0.5 s before there, and the route plans the rest
+        if (!autoplay.macro.empty()) {
+            int reached = static_cast<int>(layer->m_gameState.m_currentProgress);
+            if (reached < autoplay.macroUntil + st(60)) {
+                autoplay.macroDeaths.push_back(reached);
+                int here = 0;
+                for (int d : autoplay.macroDeaths) {
+                    if (std::abs(d - reached) < st(30)) {
+                        ++here;
+                    }
+                }
+                if (here >= 2) {
+                    autoplay.macroUntil = std::max(0, std::min(autoplay.macroUntil, reached - st(120)));
+                    say("autoplay: the macro died at step {} again: it's played up to step {}, then autoplay plans", reached, autoplay.macroUntil);
+                }
+                else {
+                    say("autoplay: the macro died at step {} ({:.0f}% of it), it plays it again", reached,
+                        100.0 * reached / std::max(1, autoplay.macroEnd));
+                }
+            }
             return;
         }
         int reached = autoplay.attemptTick;
@@ -7739,7 +7811,23 @@ namespace {
         // v3.0 test 40: not while the route plans (it replayed the inputs that led into a dead end
         // right up to it, so the route had no room: Stereo Madness 60%, 3 deaths on the same tick).
         // Only a whole level learned to the end is replayed.
-        bool replayOk = true;  // test 43: back on, up to 3 s before the last death (see autoplayDied)
+        // test 70: a macro: played by the game's step counter from the start of the attempt, the way
+        // bots play it, up to where it keeps dying (then the route plans from there)
+        if (!autoplay.macro.empty() && autoplay.macroArmed && !layer->m_isPracticeMode && !autoplay.userTouched) {
+            int now = static_cast<int>(layer->m_gameState.m_currentProgress) + static_cast<int>(Mod::get()->getSettingValue<int64_t>("macro-offset"));
+            if (now < autoplay.macroUntil) {
+                while (autoplay.macroIdx < autoplay.macro.size() && autoplay.macro[autoplay.macroIdx].first <= now) {
+                    if (!autoplay.macroLogged) {
+                        autoplay.macroLogged = true;
+                        say("macro: its first input (step {}) went in at step {} (attempt tick {})", autoplay.macro[autoplay.macroIdx].first, now, at);
+                    }
+                    autoplaySet(layer, autoplay.macro[autoplay.macroIdx].second);
+                    ++autoplay.macroIdx;
+                }
+                return;
+            }
+        }
+        bool replayOk = autoplay.macro.empty();  // test 43: back on, up to 3 s before the last death (see autoplayDied); test 70: not with a macro
         if (replayOk && !layer->m_isPracticeMode && !autoplay.userTouched && at < autoplay.knownUntil) {
             while (autoplay.replayIdx < autoplay.known.size() && autoplay.known[autoplay.replayIdx].first <= at) {
                 if (autoplay.known[autoplay.replayIdx].first == at) {

@@ -6,7 +6,7 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"version": "v3.0.0-alpha.69",
+	"version": "v3.0.0-alpha.70",
 	"id": "basu.input-buffer",
 	"name": "Click Before Frames",
 	"developer": "BASU",
@@ -386,6 +386,14 @@
 			"name": "Online Macros (Hyperbolus)",
 			"description": "When autoplay has no macro of yours for a level, it downloads one from Hyperbolus (hyperbolus.net, used with its owner's permission; macros by their uploaders, credited in the log and the autoplay panel). It's saved in the mod's macros folder and replayed from the next attempt. Off: nothing is downloaded.",
 			"default": true
+		},
+		"macro-offset": {
+			"type": "int",
+			"name": "Macro Timing Offset (steps)",
+			"description": "Moves every macro input this many physics steps earlier (+) or later (-). Leave at 0 unless a macro that should work dies early on: try 1 or -1.",
+			"default": 0,
+			"min": -5,
+			"max": 5
 		},
 		"online-players": {
 			"type": "bool",
