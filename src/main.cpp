@@ -5136,6 +5136,9 @@ namespace online {
     std::string levelFingerprint(GJGameLevel* level);
     void brainFetch(int levelId, std::string print);
 
+    int macroOffsetSetting = 0;  // test 93: read once an attempt
+    bool macroFixesSetting = true;
+
     // test 89: a bot's position record for one frame (player 1, and player 2 if it has one)
     struct MacroFix {
         int frame = 0;
@@ -6703,6 +6706,8 @@ namespace online {
         autoplay.macroArmed = !autoplay.macro.empty();
         ++autoplay.attemptNo;
         autoplay.runFlips.clear();  // test 90
+        macroOffsetSetting = static_cast<int>(Mod::get()->getSettingValue<int64_t>("macro-offset"));  // test 93
+        macroFixesSetting = Mod::get()->getSettingValue<bool>("macro-fixes");
         autoplay.userTouched = false;
         autoplay.diedThisAttempt = false;
         autoplay.reports = 0;
@@ -8605,8 +8610,7 @@ namespace online {
 
     int macroNow(PlayLayer* layer) {
         int per = progressPerStep > 0 ? progressPerStep : 2;
-        return static_cast<int>(layer->m_gameState.m_currentProgress) / per +
-            static_cast<int>(Mod::get()->getSettingValue<int64_t>("macro-offset")) + autoplay.macroAutoOffset;
+        return static_cast<int>(layer->m_gameState.m_currentProgress) / per + macroOffsetSetting + autoplay.macroAutoOffset;
     }
 
     // test 73: a macro without position records only lines up from the level's start (test 71/72
@@ -8772,7 +8776,7 @@ namespace online {
     // part that doesn't drift) puts you back on the macro's height and angle when you're slightly off,
     // so small physics differences don't add up into a death
     void macroApplyFix(PlayLayer* layer, PlayerObject* p1, int now) {
-        if (autoplay.macroFixes.empty() || !Mod::get()->getSettingValue<bool>("macro-fixes")) {
+        if (autoplay.macroFixes.empty() || !macroFixesSetting) {
             return;
         }
         auto& fx = autoplay.macroFixes;
@@ -11490,8 +11494,11 @@ class $modify(BufPlayerObject, PlayerObject) {
             if (buf.enabled) {
                 buf.usedThisAttempt = true;
             }
-            if (buf.panelDirty) {
+            // test 93: at most 10 times a second (a busy log redrew every label every physics step)
+            static int lastPanel = -1000;
+            if (buf.panelDirty && (tickCount - lastPanel >= 24 || tickCount < lastPanel)) {
                 buf.panelDirty = false;
+                lastPanel = tickCount;
                 refreshPanel();
             }
             if (benchNeedStart) {
@@ -12049,7 +12056,13 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     }
 
     void update(float dt) {
-        int tps = static_cast<int>(Mod::get()->getSettingValue<int64_t>("tps"));
+        // test 93: the setting is read twice a second, not every frame
+        static int tps = 240;
+        static int tpsAge = 1000;
+        if (++tpsAge > 30) {
+            tpsAge = 0;
+            tps = static_cast<int>(Mod::get()->getSettingValue<int64_t>("tps"));
+        }
         // v3.0 test 14: while autoplay plays, physics steps are exactly 1/240 s even at the normal
         // 240 TPS. The game's own steps are frame time / step count, so the same inputs moved
         // you a little differently each attempt (replays went differently, the ghost guessed wrong)
