@@ -5174,9 +5174,14 @@ namespace {
         int lastFrame = 0;
     };
 
+    std::optional<Macro> parseMacro(std::vector<uint8_t> const& data, std::string const& fileName, std::string& why);
     std::optional<Macro> readMacro(std::filesystem::path const& path, std::string& why) {
         std::ifstream f(path, std::ios::binary);
         std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        return parseMacro(data, path.filename().string(), why);
+    }
+
+    std::optional<Macro> parseMacro(std::vector<uint8_t> const& data, std::string const& fileName, std::string& why) {
         if (data.empty()) {
             why = "empty file";
             return std::nullopt;
@@ -5203,14 +5208,26 @@ namespace {
             }
         }
         Macro m;
-        m.file = path.filename().string();
+        m.file = fileName;
         m.author = j["author"].asString().unwrapOr("");
-        m.bot = j["botInfo"]["name"].asString().unwrapOr("");
+        // test 69: the GDR files people upload say "bot" / "level" (older writers: "botInfo" / "levelInfo")
+        auto sub = [&](char const* a, char const* b) -> matjson::Value {
+            if (j.contains(a) && j[a].isObject()) {
+                return j[a];
+            }
+            if (j.contains(b) && j[b].isObject()) {
+                return j[b];
+            }
+            return matjson::Value::object();
+        };
+        auto botInfo = sub("bot", "botInfo");
+        auto levelInfo = sub("level", "levelInfo");
+        m.bot = botInfo.contains("name") ? botInfo["name"].asString().unwrapOr("") : "";
         m.fps = j["framerate"].asDouble().unwrapOr(240.0);
         if (!(m.fps >= 30.0 && m.fps <= 100000.0)) {
             m.fps = 240.0;
         }
-        m.levelId = static_cast<int>(j["levelInfo"]["id"].asInt().unwrapOr(0));
+        m.levelId = levelInfo.contains("id") ? static_cast<int>(levelInfo["id"].asInt().unwrapOr(0)) : 0;
         if (j["platformer"].asBool().unwrapOr(false)) {
             why = "a platformer macro";
             return std::nullopt;
@@ -5236,8 +5253,13 @@ namespace {
             why = "no player 1 jump inputs in it";
             return std::nullopt;
         }
+        // test 69: inputs aren't always in order in the file (a release listed before the one before it)
+        std::stable_sort(m.inputs.begin(), m.inputs.end(), [](auto const& a, auto const& b) { return a.first < b.first; });
         return m;
     }
+
+    void fetchOnlineMacro(int levelId);
+    bool applyMacro(Macro const& m, std::string const& credit);
 
     // the macro for this level: a file named after the level id (76962930.gdr), or any file whose
     // level id inside matches
@@ -5275,9 +5297,13 @@ namespace {
             if (!why.empty()) {
                 say("autoplay: couldn't use the macro {}", why);
             }
+            fetchOnlineMacro(id);
             return;
         }
-        auto& m = *found;
+        applyMacro(*found, "");
+    }
+
+    bool applyMacro(Macro const& m, std::string const& credit) {
         double k = st(240) / m.fps;
         std::vector<std::pair<int, bool>> ticks;
         int lastTick = -1;
@@ -5296,16 +5322,156 @@ namespace {
         int until = static_cast<int>(std::llround(m.lastFrame * k)) + st(60);
         if (until <= autoplay.knownUntil) {
             say("autoplay: the macro {} is shorter than what it already learned here, it keeps its own", m.file);
-            return;
+            return false;
         }
         autoplay.known = ticks;
         autoplay.knownUntil = until;
         autoplay.knownTrail.clear();
         autoplay.knowsWholeLevel = false;
-        autoplay.fromMacro = m.file;
+        autoplay.fromMacro = credit.empty() ? m.file : credit;
         say("autoplay: plays the macro {}{}{} ({} inputs, {:.1f} s{})", m.file, m.author.empty() ? "" : " by " + m.author,
             m.bot.empty() ? "" : " (" + m.bot + ")", ticks.size(), until / static_cast<double>(st(240)),
             std::abs(m.fps - st(240)) > 0.5 ? fmt::format(", made at {:.0f} TPS, you're at {}", m.fps, st(240)) : "");
+        return true;
+    }
+
+    // ===== test 69: online macros from Hyperbolus (hyperbolus.net, used with its owner's OK) =====
+    // With no macro of your own for the level, the level's page on Hyperbolus is read once: its GDR
+    // macros (the archive lists 12 a page), approved ones first, then the most downloaded, skipping
+    // ones whose notes say they need noclip. The first that reads as a GDR macro for this level is
+    // saved in the macros folder (so it's there next time, and you can delete it) and replayed from
+    // the next attempt. Off with the "Online Macros" setting.
+    std::set<int> onlineMacroTried;
+
+    struct OnlineMacro {
+        std::string file, url, author, notes;
+        bool approved = false;
+        int downloads = 0;
+    };
+
+    std::string lower(std::string s) {
+        for (auto& c : s) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return s;
+    }
+
+    // the page's data: <script data-page="app" type="application/json">{...}</script>
+    std::optional<matjson::Value> hyperbolusPage(std::string const& url) {
+        auto res = web::WebRequest().timeout(std::chrono::seconds(20)).userAgent("ClickBeforeFrames").getSync(url);
+        if (!res.ok()) {
+            return std::nullopt;
+        }
+        auto html = res.string().unwrapOr("");
+        std::string_view open = R"(<script data-page="app" type="application/json">)";
+        auto a = html.find(open);
+        if (a == std::string::npos) {
+            return std::nullopt;
+        }
+        a += open.size();
+        auto b = html.find("</script>", a);
+        if (b == std::string::npos) {
+            return std::nullopt;
+        }
+        auto parsed = matjson::parse(std::string_view(html).substr(a, b - a));
+        if (parsed.isErr()) {
+            return std::nullopt;
+        }
+        return parsed.unwrap();
+    }
+
+    void fetchOnlineMacro(int levelId) {
+        if (levelId <= 0 || !Mod::get()->getSettingValue<bool>("online-macros") || onlineMacroTried.contains(levelId)) {
+            return;
+        }
+        onlineMacroTried.insert(levelId);
+        say("autoplay: looking for a macro of this level on Hyperbolus...");
+        std::filesystem::path dir = macroDir();
+        std::thread([levelId, dir] {
+            auto tell = [](std::string msg) { queueInMainThread([msg] { say("{}", msg); }); };
+            std::vector<OnlineMacro> list;
+            int last = 1;
+            for (int page = 1; page <= std::min(last, 8); ++page) {
+                auto data = hyperbolusPage(fmt::format("https://hyperbolus.net/level/{}/replays?page={}", levelId, page));
+                if (!data) {
+                    if (page == 1) {
+                        return tell("autoplay: Hyperbolus has no macros of this level (or couldn't be reached)");
+                    }
+                    break;
+                }
+                auto& replays = (*data)["props"]["replays"];
+                last = static_cast<int>(replays["last_page"].asInt().unwrapOr(1));
+                if (!replays["data"].isArray()) {
+                    break;
+                }
+                for (auto const& r : replays["data"]) {
+                    if (r["format"].asString().unwrapOr("") != "gdr" || !r["files"].isArray() || r["files"].size() == 0) {
+                        continue;
+                    }
+                    auto const& f = r["files"][0];
+                    OnlineMacro o;
+                    o.file = f["filename"].asString().unwrapOr("");
+                    o.url = f["url"].asString().unwrapOr("");
+                    o.downloads = static_cast<int>(f["downloads"].asInt().unwrapOr(0));
+                    o.author = r["author"].isObject() ? r["author"]["name"].asString().unwrapOr("") : "";
+                    o.notes = r["notes"].isString() ? r["notes"].asString().unwrapOr("") : "";
+                    o.approved = !r["approved_at"].isNull();
+                    auto name = lower(o.file);
+                    bool gdrFile = name.ends_with(".gdr") || name.ends_with(".gdr.json") || name.ends_with(".json");
+                    auto notes = lower(o.notes);
+                    bool noclip = notes.find("noclip") != std::string::npos && notes.find("no noclip") == std::string::npos &&
+                        notes.find("no need noclip") == std::string::npos && notes.find("without noclip") == std::string::npos &&
+                        notes.find("no need for noclip") == std::string::npos;
+                    if (gdrFile && !noclip && o.url.rfind("https://hyperbolus.net/", 0) == 0) {
+                        list.push_back(std::move(o));
+                    }
+                }
+            }
+            if (list.empty()) {
+                return tell("autoplay: Hyperbolus has no GDR macro of this level it can use");
+            }
+            std::stable_sort(list.begin(), list.end(), [](OnlineMacro const& a, OnlineMacro const& b) {
+                if (a.approved != b.approved) {
+                    return a.approved;
+                }
+                return a.downloads > b.downloads;
+            });
+            for (size_t i = 0; i < list.size() && i < 4; ++i) {
+                auto const& o = list[i];
+                auto file = web::WebRequest().timeout(std::chrono::seconds(60)).userAgent("ClickBeforeFrames").followRedirects(true).getSync(o.url);
+                if (!file.ok()) {
+                    continue;
+                }
+                auto bytes = std::move(file).data();
+                std::vector<uint8_t> data(bytes.begin(), bytes.end());
+                std::string why;
+                auto m = parseMacro(data, o.file, why);
+                if (!m || (m->levelId != 0 && m->levelId != levelId)) {
+                    continue;
+                }
+                bool json = !data.empty() && data[0] == '{';
+                auto path = dir / fmt::format("{}{}", levelId, json ? ".gdr.json" : ".gdr");
+                std::error_code ec;
+                std::filesystem::create_directories(dir, ec);
+                (void)file::writeBinarySafe(path, ByteSpan(data));
+                if (m->author.empty()) {
+                    m->author = o.author;
+                }
+                std::string credit = fmt::format("{} by {} (Hyperbolus)", o.file, o.author.empty() ? m->author : o.author);
+                Macro got = std::move(*m);
+                queueInMainThread([got, credit, levelId] {
+                    auto* layer = GameManager::get()->m_playLayer;
+                    if (!autoplay.active || !layer || !layer->m_level || layer->m_level->m_levelID.value() != levelId || layer->m_startPosObject) {
+                        say("autoplay: downloaded {}, it's used next time", credit);
+                        return;
+                    }
+                    say("autoplay: downloaded {} from Hyperbolus, it plays it from the next attempt", credit);
+                    applyMacro(got, credit);
+                });
+                return;
+            }
+            tell("autoplay: none of the Hyperbolus macros of this level could be read (GDR2 ones aren't supported yet)");
+        }).detach();
     }
 
     void loadAutoplaySaved(PlayLayer* layer);

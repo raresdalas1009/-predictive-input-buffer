@@ -6,7 +6,7 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"version": "v3.0.0-alpha.68",
+	"version": "v3.0.0-alpha.69",
 	"id": "basu.input-buffer",
 	"name": "Click Before Frames",
 	"developer": "BASU",
@@ -379,6 +379,12 @@
 			"type": "bool",
 			"name": "Auto time budget",
 			"description": "While the game is already dropping frames (a frame took over twice as long as it should, and over 20 ms), clicks get at most 4 ms of prediction time so it doesn't get worse. Otherwise the time budget setting is used as it is.",
+			"default": true
+		},
+		"online-macros": {
+			"type": "bool",
+			"name": "Online Macros (Hyperbolus)",
+			"description": "When autoplay has no macro of yours for a level, it downloads one from Hyperbolus (hyperbolus.net, used with its owner's permission; macros by their uploaders, credited in the log and the autoplay panel). It's saved in the mod's macros folder and replayed from the next attempt. Off: nothing is downloaded.",
 			"default": true
 		},
 		"online-players": {
