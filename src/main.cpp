@@ -5676,10 +5676,16 @@ namespace {
                 picks.push_back({ o, std::move(*m), std::move(data) });
             }
             if (!picks.empty()) {
+                // test 88: 2.206+ first (2.2069 left out 2.206 macros, which work: Thinking Space II;
+                // Silent Acropolis's only working one), then ones with the bot's position records
                 std::stable_sort(picks.begin(), picks.end(), [](Pick const& a, Pick const& b) {
-                    bool na = a.m.gameVersion >= 2.2069, nb = b.m.gameVersion >= 2.2069;
+                    bool na = a.m.gameVersion >= 2.2055, nb = b.m.gameVersion >= 2.2055;
                     if (na != nb) {
                         return na;
+                    }
+                    bool fa = a.m.fixes.size() > 100, fb = b.m.fixes.size() > 100;
+                    if (fa != fb) {
+                        return fa;
                     }
                     if (a.o.approved != b.o.approved) {
                         return a.o.approved;
