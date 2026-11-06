@@ -6212,6 +6212,7 @@ namespace {
     }
 
     // a death: keep this attempt's inputs up to a bit before it (normal mode, bot-only attempts)
+    constexpr int MACRO_OFFSETS[5] = { 0, 1, -1, 2, -2 };  // test 79
     int macroNow(PlayLayer* layer);
     void autoplayDied(PlayLayer* layer) {
         if (layer->m_isPracticeMode || (autoplay.userTouched && autoplay.macro.empty())) {
@@ -8039,8 +8040,6 @@ namespace {
         }
         lastProgress = p;
     }
-
-    constexpr int MACRO_OFFSETS[5] = { 0, 1, -1, 2, -2 };
 
     int macroNow(PlayLayer* layer) {
         int per = progressPerStep > 0 ? progressPerStep : 2;
