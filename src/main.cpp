@@ -907,6 +907,14 @@ namespace {
             buf.showPath, buf.perfLog, buf.deathLog, buf.ignoreTouching);
         text += fmt::format("explain inputs {} | low latency {} | cbf sync {}{}\n", buf.explain, buf.lowLatency, buf.cbfSync,
             Loader::get()->isModLoaded("syzzi.click_between_frames") ? " (CBF loaded)" : "");
+        // test 78: CBF's own settings (Physics Bypass changes physics even with CBF disabled)
+        if (auto* cbf = Loader::get()->getLoadedMod("syzzi.click_between_frames")) {
+            auto b = [&](char const* k) -> std::string {
+                return cbf->hasSetting(k) ? (cbf->getSettingValue<bool>(k) ? "on" : "off") : "?";
+            };
+            text += fmt::format("CBF: disabled {} | click on steps {} | physics bypass {} | precision fix {}\n", b("soft-toggle"),
+                b("click-on-steps"), b("physics-bypass"), b("precision-fix"));
+        }
         // v2.39: CBF Extrapolate only changes what's drawn (a hidden player run ahead to "now"),
         // never the real player's physics, so predictions aren't affected by it.
         if (Loader::get()->isModLoaded("square3ang.cbfextrapolate")) {
@@ -5344,6 +5352,7 @@ namespace {
         applyMacro(*found, credit);
     }
 
+    void cbfOffForMacro();
     bool applyMacro(Macro const& m, std::string const& credit) {
         // test 71: like Nova, only a macro made at your TPS (a converted one never lines up)
         if (std::abs(m.fps - st(240)) > 0.5) {
@@ -5422,6 +5431,7 @@ namespace {
         autoplay.knownTrail.clear();
         autoplay.knowsWholeLevel = false;
         autoplay.fromMacro = credit.empty() ? m.file : credit;
+        cbfOffForMacro();
         say("autoplay: plays the macro {}{}{} ({} inputs, {:.1f} s{})", m.file, m.author.empty() ? "" : " by " + m.author,
             m.bot.empty() ? "" : " (" + m.bot + ")", ticks.size(), until / static_cast<double>(st(240)),
             std::abs(m.fps - st(240)) > 0.5 ? fmt::format(", made at {:.0f} TPS, you're at {}", m.fps, st(240)) : "");
@@ -5729,7 +5739,55 @@ namespace {
         }
     }
 
+    // test 78: while a macro plays, Click Between Frames is switched off (its "Disable CBF") and so is
+    // its Physics Bypass, which changes physics even with CBF disabled: macros are made without them,
+    // and a different press or step drifts the macro off. Your settings come back when autoplay stops
+    // (or at the next start if the game closed first).
+    bool cbfOverridden = false;
+
+    void cbfRestore() {
+        auto saved = Mod::get()->getSavedValue<std::string>("cbf-restore", "");
+        if (saved.size() != 2) {
+            cbfOverridden = false;
+            return;
+        }
+        if (auto* cbf = Loader::get()->getLoadedMod("syzzi.click_between_frames")) {
+            if (cbf->hasSetting("soft-toggle")) {
+                cbf->setSettingValue<bool>("soft-toggle", saved[0] == '1');
+            }
+            if (cbf->hasSetting("physics-bypass")) {
+                cbf->setSettingValue<bool>("physics-bypass", saved[1] == '1');
+            }
+            say("Click Between Frames: your settings are back (disabled {}, physics bypass {})", saved[0] == '1' ? "on" : "off",
+                saved[1] == '1' ? "on" : "off");
+        }
+        Mod::get()->setSavedValue("cbf-restore", std::string());
+        cbfOverridden = false;
+    }
+
+    void cbfOffForMacro() {
+        auto* cbf = Loader::get()->getLoadedMod("syzzi.click_between_frames");
+        if (!cbf || cbfOverridden || !cbf->hasSetting("soft-toggle")) {
+            return;
+        }
+        bool soft = cbf->getSettingValue<bool>("soft-toggle");
+        bool bypass = cbf->hasSetting("physics-bypass") && cbf->getSettingValue<bool>("physics-bypass");
+        if (soft && !bypass) {
+            return;  // already off
+        }
+        Mod::get()->setSavedValue("cbf-restore", std::string(soft ? "1" : "0") + (bypass ? "1" : "0"));
+        cbfOverridden = true;
+        cbf->setSettingValue<bool>("soft-toggle", true);
+        if (bypass) {
+            cbf->setSettingValue<bool>("physics-bypass", false);
+        }
+        say("Click Between Frames: switched off while the macro plays{} (back when autoplay stops)", bypass ? ", and its Physics Bypass" : "");
+    }
+
     void stopAutoplay(char const* why) {
+        if (cbfOverridden) {
+            cbfRestore();
+        }
         if (!autoplay.active) {
             return;
         }
@@ -10146,6 +10204,7 @@ $on_mod(Loaded) {
 #endif
     if (Loader::get()->isModLoaded("syzzi.click_between_frames")) {
         say("Click Between Frames detected: mid-tick sync {}", buf.cbfSync ? "on" : "off");
+        cbfRestore();  // test 78: if the game closed while a macro had it off
     }
     if (Loader::get()->isModLoaded("square3ang.cbfextrapolate")) {
         say("CBF Extrapolate detected: visual only, predictions unaffected");
