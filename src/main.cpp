@@ -4982,7 +4982,15 @@ namespace {
         int macroTry = 0;       // index into MACRO_OFFSETS while trying
         bool macroTuned = false;
         int macroAutoOffset = 0;
-        std::array<int, 5> macroReach { -1, -1, -1, -1, -1 };
+        std::array<int, 5> macroReach { -1, -1, -1, -1, -1 };  // (test 79; test 84: macroTrialReach)
+        // test 84: 2-player levels: each player's clicks on their own (macro = player 1's, macroP2 = player 2's)
+        bool macroTwoPlayer = false;
+        bool macroSwap = false;  // the file's "player 1" / "player 2" the other way round (iCreate)
+        std::vector<std::pair<int, bool>> macroA, macroB, macroP2;
+        size_t macroIdx2 = 0;
+        bool held2 = false;
+        std::vector<std::pair<int, bool>> macroTrials;  // (shift, swapped) tried in turn
+        std::vector<int> macroTrialReach;
         std::vector<int> deathTicks;  // where this session's attempts ended (learning backs off at repeats)
         // v3.0 test 51: the attempt that got furthest; the next one replays it to just before its end
         int bestReached = -1;
@@ -5359,6 +5367,18 @@ namespace {
     }
 
     void cbfOffForMacro();
+    // test 84: which of the file's two click lists goes to player 1 in a 2-player level
+    void macroSetSwap(bool swap) {
+        autoplay.macroSwap = swap;
+        if (!autoplay.macroTwoPlayer) {
+            return;
+        }
+        autoplay.macro = swap ? autoplay.macroB : autoplay.macroA;
+        autoplay.macroP2 = swap ? autoplay.macroA : autoplay.macroB;
+        autoplay.macroX.clear();
+        autoplay.macroSyncedFor = -1;
+    }
+
     bool applyMacro(Macro const& m, std::string const& credit) {
         // test 71: like Nova, only a macro made at your TPS (a converted one never lines up)
         if (std::abs(m.fps - st(240)) > 0.5) {
@@ -5390,19 +5410,35 @@ namespace {
             (void)which;
             merged.push_back({ f, d });
         }
-        std::vector<std::pair<int, bool>> ticks;
-        int lastTick = -1;
-        bool held = false;
-        for (auto const& [frame, down] : merged) {
-            if (down == held) {
-                continue;  // a repeat of the same state changes nothing
+        auto toTicks = [k](std::vector<std::pair<int, bool>> const& in) {
+            std::vector<std::pair<int, bool>> out;
+            int lastTick = -1;
+            bool held = false;
+            for (auto const& [frame, down] : in) {
+                if (down == held) {
+                    continue;  // a repeat of the same state changes nothing
+                }
+                int t = static_cast<int>(std::llround(frame * k));
+                // two changes on one tick (a 1-tick tap): the second goes on the next tick
+                t = std::max(t, lastTick + 1);
+                out.push_back({ t, down });
+                lastTick = t;
+                held = down;
             }
-            int t = static_cast<int>(std::llround(frame * k));
-            // two changes on one tick (a 1-tick tap): the second goes on the next tick
-            t = std::max(t, lastTick + 1);
-            ticks.push_back({ t, down });
-            lastTick = t;
-            held = down;
+            return out;
+        };
+        std::vector<std::pair<int, bool>> ticks = toTicks(merged);
+        autoplay.macroTwoPlayer = twoPlayer;
+        autoplay.macroA.clear();
+        autoplay.macroB.clear();
+        autoplay.macroP2.clear();
+        autoplay.macroSwap = false;
+        if (twoPlayer) {
+            // test 84: player 1's and player 2's clicks each to their own player
+            autoplay.macroA = toTicks(m.inputs);
+            autoplay.macroB = toTicks(m.inputs2);
+            ticks = autoplay.macroA;
+            autoplay.macroP2 = autoplay.macroB;
         }
         int until = static_cast<int>(std::llround(m.lastFrame * k)) + st(60);
         if (until <= autoplay.knownUntil) {
@@ -5436,8 +5472,21 @@ namespace {
         autoplay.macroInGap = false;
         autoplay.macroTry = 0;
         autoplay.macroTuned = false;
-        autoplay.macroAutoOffset = 1;  // test 83: the first shift tried (MACRO_OFFSETS[0])
-        autoplay.macroReach = { -1, -1, -1, -1, -1 };
+        // test 83: +1 first; test 84: in 2-player levels each shift also with the players swapped
+        autoplay.macroTrials.clear();
+        for (int sh : { 1, 0, -1, 2, -2 }) {
+            autoplay.macroTrials.push_back({ sh, false });
+            if (twoPlayer) {
+                autoplay.macroTrials.push_back({ sh, true });
+            }
+        }
+        if (twoPlayer) {
+            autoplay.macroTrials.resize(6);  // +1, +1 swapped, 0, 0 swapped, -1, -1 swapped
+        }
+        autoplay.macroTrialReach.assign(autoplay.macroTrials.size(), -1);
+        autoplay.macroAutoOffset = autoplay.macroTrials[0].first;
+        autoplay.macroIdx2 = 0;
+        autoplay.held2 = false;
         autoplay.known.clear();
         autoplay.knownUntil = 0;
         autoplay.knownTrail.clear();
@@ -5449,9 +5498,13 @@ namespace {
             auto saved = Mod::get()->getSavedValue<std::string>(fmt::format("macro-shift-{}", plNow->m_level->m_levelID.value()), "");
             auto bar = saved.find('|');
             if (bar != std::string::npos && saved.substr(bar + 1) == autoplay.fromMacro) {
-                autoplay.macroAutoOffset = std::atoi(saved.substr(0, bar).c_str());
+                auto head = saved.substr(0, bar);
+                autoplay.macroAutoOffset = std::atoi(head.c_str());
                 autoplay.macroTuned = true;
-                say("autoplay: plays it shifted {:+d} step(s), as found before", autoplay.macroAutoOffset);
+                if (head.find('s') != std::string::npos) {
+                    macroSetSwap(true);
+                }
+                say("autoplay: plays it shifted {:+d} step(s){}, as found before", autoplay.macroAutoOffset, autoplay.macroSwap ? ", players swapped" : "");
             }
         }
         say("autoplay: plays the macro {}{}{} ({} inputs, {:.1f} s{})", m.file, m.author.empty() ? "" : " by " + m.author,
@@ -6237,33 +6290,36 @@ namespace {
         if (!autoplay.macro.empty()) {
             int reached = macroNow(layer);
             // test 79: first find the step the macro lines up on: each shift gets an attempt
-            if (!autoplay.macroTuned && !autoplay.macroByX && reached < autoplay.macroEnd) {
+            if (!autoplay.macroTuned && !autoplay.macroByX && reached < autoplay.macroEnd && !autoplay.macroTrials.empty()) {
                 int raw = reached - autoplay.macroAutoOffset;
-                autoplay.macroReach[autoplay.macroTry] = raw;
-                say("autoplay: the macro shifted {:+d} step(s) got to step {}", autoplay.macroAutoOffset, raw);
-                if (autoplay.macroTry + 1 < 5) {
+                int n = static_cast<int>(autoplay.macroTrials.size());
+                autoplay.macroTrialReach[autoplay.macroTry] = raw;
+                say("autoplay: the macro shifted {:+d} step(s){} got to step {}", autoplay.macroAutoOffset, autoplay.macroSwap ? ", players swapped," : "", raw);
+                if (autoplay.macroTry + 1 < n) {
                     ++autoplay.macroTry;
-                    autoplay.macroAutoOffset = MACRO_OFFSETS[autoplay.macroTry];
-                    say("autoplay: trying the macro shifted {:+d} step(s)", autoplay.macroAutoOffset);
+                    autoplay.macroAutoOffset = autoplay.macroTrials[autoplay.macroTry].first;
+                    macroSetSwap(autoplay.macroTrials[autoplay.macroTry].second);
+                    say("autoplay: trying the macro shifted {:+d} step(s){}", autoplay.macroAutoOffset, autoplay.macroSwap ? ", players swapped" : "");
                     return;
                 }
                 int best = 0;
-                for (int i = 1; i < 5; ++i) {
-                    if (autoplay.macroReach[i] > autoplay.macroReach[best]) {
+                for (int i = 1; i < n; ++i) {
+                    if (autoplay.macroTrialReach[i] > autoplay.macroTrialReach[best]) {
                         best = i;
                     }
                 }
                 autoplay.macroTuned = true;
-                autoplay.macroAutoOffset = MACRO_OFFSETS[best];
-                say("autoplay: the macro goes furthest shifted {:+d} step(s) (to step {}): it's played that way", autoplay.macroAutoOffset,
-                    autoplay.macroReach[best]);
+                autoplay.macroAutoOffset = autoplay.macroTrials[best].first;
+                macroSetSwap(autoplay.macroTrials[best].second);
+                say("autoplay: the macro goes furthest shifted {:+d} step(s){} (to step {}): it's played that way", autoplay.macroAutoOffset,
+                    autoplay.macroSwap ? ", players swapped" : "", autoplay.macroTrialReach[best]);
                 // test 81: remembered for this macro, so the next session doesn't try them all again
                 if (layer->m_level) {
                     Mod::get()->setSavedValue(fmt::format("macro-shift-{}", layer->m_level->m_levelID.value()),
-                        fmt::format("{}|{}", autoplay.macroAutoOffset, autoplay.fromMacro));
+                        fmt::format("{}{}|{}", autoplay.macroAutoOffset, autoplay.macroSwap ? "s" : "", autoplay.fromMacro));
                 }
                 autoplay.macroDeaths.clear();
-                autoplay.macroDeaths.push_back(autoplay.macroReach[best] + autoplay.macroAutoOffset);
+                autoplay.macroDeaths.push_back(autoplay.macroTrialReach[best] + autoplay.macroAutoOffset);
                 return;
             }
             if (reached < autoplay.macroUntil + st(60)) {
@@ -6301,7 +6357,10 @@ namespace {
                     fetchOnlineMacro(lid);
                     return;
                 }
-                if (here >= 2) {
+                if (here >= 2 && autoplay.macroTwoPlayer) {
+                    say("autoplay: the macro died at step {} again (2-player level: autoplay can't plan player 2, it plays the macro again)", reached);
+                }
+                else if (here >= 2) {
                     // test 75 (like Nova): autoplay plans a stretch around it, the macro plays on after it
                     bool grown = false;
                     for (auto& g : autoplay.macroGaps) {
@@ -8143,6 +8202,18 @@ namespace {
         autoplay.attemptFlips.push_back({ autoplay.attemptTick, down });
     }
 
+    // test 84: player 2's button in a 2-player level
+    void macroPress2(PlayLayer* layer, bool down) {
+        if (autoplay.held2 == down) {
+            return;
+        }
+        buf.injecting = true;
+        autoplay.held2 = down;
+        layer->handleButton(down, 1, false);
+        buf.injecting = false;
+        ++autoplay.inputs;
+    }
+
     // at the start of each game step, before the players move
     void macroStep(PlayLayer* layer) {
         if (!autoplay.active || autoplay.layer != layer || autoplay.macro.empty() || layer->m_isPracticeMode || buf.simulating) {
@@ -8176,6 +8247,15 @@ namespace {
             autoplay.macroIdx = idx;
             autoplay.macroLogged = false;
             macroPress(layer, idx > 0 && autoplay.macro[idx - 1].second);
+            if (autoplay.macroTwoPlayer) {
+                size_t i2 = 0;
+                while (i2 < autoplay.macroP2.size() && autoplay.macroP2[i2].first < now) {
+                    ++i2;
+                }
+                autoplay.macroIdx2 = i2;
+                autoplay.held2 = !(i2 > 0 && autoplay.macroP2[i2 - 1].second);  // so the next line presses it either way
+                macroPress2(layer, i2 > 0 && autoplay.macroP2[i2 - 1].second);
+            }
             say("autoplay: playing the macro {} (it comes first) from {}", autoplay.fromMacro,
                 autoplay.macroByX ? fmt::format("x {:.0f}", px) : fmt::format("step {}", now));
         }
@@ -8193,6 +8273,12 @@ namespace {
             }
             macroPress(layer, autoplay.macro[autoplay.macroIdx].second);
             ++autoplay.macroIdx;
+        }
+        if (autoplay.macroTwoPlayer && !autoplay.macroByX) {
+            while (autoplay.macroIdx2 < autoplay.macroP2.size() && autoplay.macroP2[autoplay.macroIdx2].first <= now) {
+                macroPress2(layer, autoplay.macroP2[autoplay.macroIdx2].second);
+                ++autoplay.macroIdx2;
+            }
         }
     }
 
