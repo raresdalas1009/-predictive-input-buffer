@@ -4977,6 +4977,11 @@ namespace {
         std::vector<int> macroDeaths;
         std::vector<std::pair<int, int>> macroGaps;  // test 75: stretches autoplay plays itself, the macro the rest
         bool macroInGap = false;
+        // test 79: which step the macro's frame 0 is (bots differ by a step): tried in turn, the best kept
+        int macroTry = 0;       // index into MACRO_OFFSETS while trying
+        bool macroTuned = false;
+        int macroAutoOffset = 0;
+        std::array<int, 5> macroReach { -1, -1, -1, -1, -1 };
         std::vector<int> deathTicks;  // where this session's attempts ended (learning backs off at repeats)
         // v3.0 test 51: the attempt that got furthest; the next one replays it to just before its end
         int bestReached = -1;
@@ -5426,6 +5431,10 @@ namespace {
         autoplay.macroDeaths.clear();
         autoplay.macroGaps.clear();
         autoplay.macroInGap = false;
+        autoplay.macroTry = 0;
+        autoplay.macroTuned = false;
+        autoplay.macroAutoOffset = 0;
+        autoplay.macroReach = { -1, -1, -1, -1, -1 };
         autoplay.known.clear();
         autoplay.knownUntil = 0;
         autoplay.knownTrail.clear();
@@ -6212,6 +6221,31 @@ namespace {
         // to 0.5 s before there, and the route plans the rest
         if (!autoplay.macro.empty()) {
             int reached = macroNow(layer);
+            // test 79: first find the step the macro lines up on: each shift gets an attempt
+            if (!autoplay.macroTuned && !autoplay.macroByX && reached < autoplay.macroEnd) {
+                int raw = reached - autoplay.macroAutoOffset;
+                autoplay.macroReach[autoplay.macroTry] = raw;
+                say("autoplay: the macro shifted {:+d} step(s) got to step {}", autoplay.macroAutoOffset, raw);
+                if (autoplay.macroTry + 1 < 5) {
+                    ++autoplay.macroTry;
+                    autoplay.macroAutoOffset = MACRO_OFFSETS[autoplay.macroTry];
+                    say("autoplay: trying the macro shifted {:+d} step(s)", autoplay.macroAutoOffset);
+                    return;
+                }
+                int best = 0;
+                for (int i = 1; i < 5; ++i) {
+                    if (autoplay.macroReach[i] > autoplay.macroReach[best]) {
+                        best = i;
+                    }
+                }
+                autoplay.macroTuned = true;
+                autoplay.macroAutoOffset = MACRO_OFFSETS[best];
+                say("autoplay: the macro goes furthest shifted {:+d} step(s) (to step {}): it's played that way", autoplay.macroAutoOffset,
+                    autoplay.macroReach[best]);
+                autoplay.macroDeaths.clear();
+                autoplay.macroDeaths.push_back(autoplay.macroReach[best] + autoplay.macroAutoOffset);
+                return;
+            }
             if (reached < autoplay.macroUntil + st(60)) {
                 autoplay.macroDeaths.push_back(reached);
                 int here = 0;
@@ -8006,10 +8040,12 @@ namespace {
         lastProgress = p;
     }
 
+    constexpr int MACRO_OFFSETS[5] = { 0, 1, -1, 2, -2 };
+
     int macroNow(PlayLayer* layer) {
         int per = progressPerStep > 0 ? progressPerStep : 2;
         return static_cast<int>(layer->m_gameState.m_currentProgress) / per +
-            static_cast<int>(Mod::get()->getSettingValue<int64_t>("macro-offset"));
+            static_cast<int>(Mod::get()->getSettingValue<int64_t>("macro-offset")) + autoplay.macroAutoOffset;
     }
 
     // test 73: a macro without position records only lines up from the level's start (test 71/72
