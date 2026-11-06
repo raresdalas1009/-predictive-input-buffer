@@ -5187,6 +5187,7 @@ namespace {
         std::vector<std::pair<int, bool>> inputs2;  // test 70: the same, marked as player 2's
         std::vector<std::pair<int, float>> fixes;  // test 71: (frame, player 1's x) where the bot recorded it
         int lastFrame = 0;
+        double gameVersion = 0.0;  // test 77
     };
 
     std::optional<Macro> parseMacro(std::vector<uint8_t> const& data, std::string const& fileName, std::string& why);
@@ -5239,6 +5240,7 @@ namespace {
         auto levelInfo = sub("level", "levelInfo");
         m.bot = botInfo.contains("name") ? botInfo["name"].asString().unwrapOr("") : "";
         m.fps = j["framerate"].asDouble().unwrapOr(240.0);
+        m.gameVersion = j.contains("gameVersion") ? j["gameVersion"].asDouble().unwrapOr(0.0) : 0.0;
         if (!(m.fps >= 30.0 && m.fps <= 100000.0)) {
             m.fps = 240.0;
         }
@@ -5333,7 +5335,13 @@ namespace {
             fetchOnlineMacro(id);
             return;
         }
-        applyMacro(*found, "");
+        // test 77: one downloaded from Hyperbolus keeps its credit
+        std::string credit;
+        auto src = Mod::get()->getSavedValue<std::string>(fmt::format("macro-src-{}", id), "");
+        if (auto nl = src.find('\n'); nl != std::string::npos && found->file.rfind(std::to_string(id) + ".", 0) == 0) {
+            credit = src.substr(nl + 1);
+        }
+        applyMacro(*found, credit);
     }
 
     bool applyMacro(Macro const& m, std::string const& credit) {
@@ -5473,7 +5481,8 @@ namespace {
         say("autoplay: looking for a macro of this level on Hyperbolus...");
         std::filesystem::path dir = macroDir();
         double tps = st(240);
-        std::thread([levelId, dir, tps] {
+        std::string bad = "|" + Mod::get()->getSavedValue<std::string>(fmt::format("macro-bad-{}", levelId), "") + "|";
+        std::thread([levelId, dir, tps, bad] {
             auto tell = [](std::string msg) { queueInMainThread([msg] { say("{}", msg); }); };
             std::vector<OnlineMacro> list;
             int last = 1;
@@ -5536,8 +5545,22 @@ namespace {
                 }
                 return a.downloads > b.downloads;
             });
-            for (size_t i = 0; i < list.size() && i < 6; ++i) {
+            // test 77: up to 8 are downloaded and read; the one made at your TPS on the newest GD
+            // (2.207+ first: macros from older 2.2 versions can go wrong in 2.2081), then approved, then
+            // the most downloaded. Ones that failed you before are skipped.
+            struct Pick {
+                OnlineMacro o;
+                Macro m;
+                std::vector<uint8_t> data;
+            };
+            std::vector<Pick> picks;
+            int skippedBad = 0;
+            for (size_t i = 0; i < list.size() && i < 8; ++i) {
                 auto const& o = list[i];
+                if (bad.find("|" + o.url + "|") != std::string::npos) {
+                    ++skippedBad;
+                    continue;
+                }
                 auto file = web::WebRequest().timeout(std::chrono::seconds(60)).userAgent("ClickBeforeFrames").followRedirects(true).getSync(o.url);
                 if (!file.ok()) {
                     continue;
@@ -5546,32 +5569,51 @@ namespace {
                 std::vector<uint8_t> data(bytes.begin(), bytes.end());
                 std::string why;
                 auto m = parseMacro(data, o.file, why);
-                if (!m || (m->levelId != 0 && m->levelId != levelId)) {
+                if (!m || (m->levelId != 0 && m->levelId != levelId) || std::abs(m->fps - tps) > 0.5) {
                     continue;
                 }
-                if (std::abs(m->fps - tps) > 0.5) {
-                    continue;  // test 71: made at another TPS (it can't be used)
-                }
-                bool json = !data.empty() && data[0] == '{';
+                picks.push_back({ o, std::move(*m), std::move(data) });
+            }
+            if (!picks.empty()) {
+                std::stable_sort(picks.begin(), picks.end(), [](Pick const& a, Pick const& b) {
+                    bool na = a.m.gameVersion >= 2.2069, nb = b.m.gameVersion >= 2.2069;
+                    if (na != nb) {
+                        return na;
+                    }
+                    if (a.o.approved != b.o.approved) {
+                        return a.o.approved;
+                    }
+                    return a.o.downloads > b.o.downloads;
+                });
+                auto& best = picks.front();
+                bool json = !best.data.empty() && best.data[0] == '{';
                 auto path = dir / fmt::format("{}{}", levelId, json ? ".gdr.json" : ".gdr");
                 std::error_code ec;
                 std::filesystem::create_directories(dir, ec);
-                (void)file::writeBinarySafe(path, ByteSpan(data));
-                if (m->author.empty()) {
-                    m->author = o.author;
+                std::filesystem::remove(dir / fmt::format("{}.gdr", levelId), ec);
+                std::filesystem::remove(dir / fmt::format("{}.gdr.json", levelId), ec);
+                (void)file::writeBinarySafe(path, ByteSpan(best.data));
+                if (best.m.author.empty()) {
+                    best.m.author = best.o.author;
                 }
-                std::string credit = fmt::format("{} by {} (Hyperbolus)", o.file, o.author.empty() ? m->author : o.author);
-                Macro got = std::move(*m);
-                queueInMainThread([got, credit, levelId] {
+                std::string credit = fmt::format("{} by {} (Hyperbolus, GD {:.4f})", best.o.file, best.o.author.empty() ? best.m.author : best.o.author,
+                    best.m.gameVersion);
+                std::string url = best.o.url;
+                size_t usable = picks.size();
+                Macro got = std::move(best.m);
+                queueInMainThread([got, credit, levelId, url, usable] {
+                    Mod::get()->setSavedValue(fmt::format("macro-src-{}", levelId), url + "\n" + credit);
                     auto* layer = GameManager::get()->m_playLayer;
-                    if (!autoplay.active || !layer || !layer->m_level || layer->m_level->m_levelID.value() != levelId || layer->m_startPosObject) {
-                        say("autoplay: downloaded {}, it's used next time", credit);
+                    say("autoplay: downloaded {} from Hyperbolus ({} of its macros fit your TPS)", credit, usable);
+                    if (!autoplay.active || !layer || !layer->m_level || layer->m_level->m_levelID.value() != levelId) {
                         return;
                     }
-                    say("autoplay: downloaded {} from Hyperbolus, it plays it from the next attempt", credit);
                     applyMacro(got, credit);
                 });
                 return;
+            }
+            if (skippedBad > 0) {
+                return tell(fmt::format("autoplay: no other Hyperbolus macro of this level to try ({} failed here before); autoplay plays it itself", skippedBad));
             }
             tell("autoplay: none of the Hyperbolus macros of this level could be used (made at another TPS, or GDR2, which isn't supported yet)");
         }).detach();
@@ -6119,6 +6161,33 @@ namespace {
                     if (std::abs(d - reached) < st(30)) {
                         ++here;
                     }
+                }
+                // test 77: a downloaded macro dying twice in its first 5%: it doesn't work here (an
+                // older GD, or a broken one): the next best one is downloaded
+                auto* lvl = layer->m_level;
+                int lid = lvl ? lvl->m_levelID.value() : 0;
+                auto src = lid > 0 ? Mod::get()->getSavedValue<std::string>(fmt::format("macro-src-{}", lid), "") : std::string();
+                auto nl = src.find('\n');
+                bool fromSite = nl != std::string::npos && autoplay.fromMacro == src.substr(nl + 1);
+                // (one downloaded by tests 69-76 has no record of where it's from: it's downloaded again)
+                bool oldDownload = src.empty() && lid > 0 && autoplay.fromMacro.rfind(std::to_string(lid) + ".", 0) == 0;
+                if (here >= 2 && reached < autoplay.macroEnd / 20 && (fromSite || oldDownload)) {
+                    if (fromSite) {
+                        auto key = fmt::format("macro-bad-{}", lid);
+                        auto badList = Mod::get()->getSavedValue<std::string>(key, "");
+                        Mod::get()->setSavedValue(key, badList.empty() ? src.substr(0, nl) : badList + "|" + src.substr(0, nl));
+                    }
+                    Mod::get()->setSavedValue(fmt::format("macro-src-{}", lid), std::string());
+                    std::error_code ec;
+                    std::filesystem::remove(macroDir() / fmt::format("{}.gdr", lid), ec);
+                    std::filesystem::remove(macroDir() / fmt::format("{}.gdr.json", lid), ec);
+                    say("autoplay: the macro {} died twice at step {} ({:.0f}% into it): it's dropped, looking for another one", autoplay.fromMacro, reached,
+                        100.0 * reached / std::max(1, autoplay.macroEnd));
+                    autoplay.macro.clear();
+                    autoplay.fromMacro.clear();
+                    onlineMacroTried.erase(lid);
+                    fetchOnlineMacro(lid);
+                    return;
                 }
                 if (here >= 2) {
                     // test 75 (like Nova): autoplay plans a stretch around it, the macro plays on after it
