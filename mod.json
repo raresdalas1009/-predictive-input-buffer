@@ -6,7 +6,7 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"version": "v3.0.0",
+	"version": "v3.0.1",
 	"id": "basu.input-buffer",
 	"name": "Click Before Frames",
 	"developer": "BASU",
@@ -400,6 +400,19 @@
 			"default": 0,
 			"min": -5,
 			"max": 5
+		},
+		"autoplay-trail": {
+			"type": "bool",
+			"name": "Show Autoplay Trail",
+			"description": "Draws the path autoplay plans (and its inputs) on the level. Off for clean showcase recordings; autoplay plays the same either way.",
+			"default": false
+		},
+		"autoplay-label": {
+			"type": "string",
+			"name": "Autoplay Label",
+			"description": "The AUTOPLAY label is always on screen while autoplay plays, so a recording can't pass as a real run. Big: at the top. Small: a small see-through label in the bottom corner, for showcases.",
+			"default": "Big",
+			"one-of": ["Big", "Small"]
 		},
 		"global-brain": {
 			"type": "bool",
