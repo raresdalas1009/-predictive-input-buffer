@@ -1,0 +1,22 @@
+# Click Before Frames: online counter + website (Cloudflare Worker with static files and a D1 database)
+name = "cbf-online"
+main = "src/worker.js"
+compatibility_date = "2026-10-01"
+
+# the website (public/) is served by the same worker
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/auth/*"]
+
+# fill in database_id after `npx wrangler d1 create cbf-online` (see README.md)
+[[d1_databases]]
+binding = "DB"
+database_name = "cbf-online"
+database_id = "PUT-YOUR-DATABASE-ID-HERE"
+
+[vars]
+# your Discord application's client id (not secret), and your server invite (optional)
+DISCORD_CLIENT_ID = "PUT-YOUR-CLIENT-ID-HERE"
+DISCORD_INVITE = ""
+# secrets (never here): npx wrangler secret put DISCORD_CLIENT_SECRET / SESSION_SECRET

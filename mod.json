@@ -6,7 +6,7 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"version": "v3.0.0-alpha.65",
+	"version": "v3.0.0-alpha.66",
 	"id": "basu.input-buffer",
 	"name": "Click Before Frames",
 	"developer": "BASU",
@@ -379,6 +379,12 @@
 			"type": "bool",
 			"name": "Auto time budget",
 			"description": "While the game is already dropping frames (a frame took over twice as long as it should, and over 20 ms), clicks get at most 4 ms of prediction time so it doesn't get worse. Otherwise the time budget setting is used as it is.",
+			"default": true
+		},
+		"online-players": {
+			"type": "bool",
+			"name": "Show Online Players",
+			"description": "Shows how many Click Before Frames players are online in the window's footer. To count you, every 90 seconds the game sends the Click Before Frames server an anonymous random id, your device type and the mod's version. No name, account, level or gameplay. Turn it off and nothing is sent.",
 			"default": true
 		},
 		"check-updates": {

@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Click Before Frames</title>
+<meta name="description" content="Click Before Frames: who's playing right now.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0c0a1a;
+    --bg2: #160f2e;
+    --card: rgba(255, 255, 255, 0.05);
+    --card-edge: rgba(190, 160, 255, 0.22);
+    --text: #f1eeff;
+    --muted: #a49fc4;
+    --accent: #a66bff;
+    --accent2: #5fd7ff;
+    --good: #66e09a;
+    --bar: rgba(255, 255, 255, 0.08);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  html { background: var(--bg); }
+  [hidden] { display: none !important; }
+  body {
+    min-height: 100vh;
+    font-family: Poppins, system-ui, sans-serif;
+    color: var(--text);
+    background: radial-gradient(1200px 700px at 15% -10%, #3a1d78 0%, transparent 60%),
+                radial-gradient(900px 600px at 110% 20%, #123a5a 0%, transparent 55%),
+                linear-gradient(160deg, var(--bg2), var(--bg));
+    background-attachment: fixed;
+    overflow-x: hidden;
+  }
+  #stars { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+  .wrap { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 28px 16px 60px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 26px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .logo { width: 42px; height: 42px; border-radius: 12px; background: linear-gradient(135deg, var(--accent), var(--accent2));
+          display: grid; place-items: center; font-weight: 800; font-size: 16px; color: #0c0a1a; box-shadow: 0 0 24px rgba(166, 107, 255, .45); }
+  .brand h1 { margin: 0; font-size: 20px; letter-spacing: .3px; }
+  .brand small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px; font: 600 13px Poppins, sans-serif;
+         color: var(--text); text-decoration: none; border: 1px solid var(--card-edge); background: var(--card); cursor: pointer;
+         transition: transform .15s ease, background .2s ease, box-shadow .2s ease; }
+  .btn:hover { transform: translateY(-1px); background: rgba(255, 255, 255, .09); }
+  .btn.discord { background: #5865f2; border-color: #7983ff; box-shadow: 0 6px 20px rgba(88, 101, 242, .35); }
+  .btn.discord:hover { background: #4752e0; }
+  .me { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+  .me img { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--card-edge); }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .card { position: relative; padding: 20px 22px; border-radius: 20px; background: var(--card); border: 1px solid var(--card-edge);
+          backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); overflow: hidden;
+          opacity: 0; transform: translateY(14px); animation: rise .6s cubic-bezier(.2, .8, .2, 1) forwards; }
+  .card:nth-child(2) { animation-delay: .07s; } .card:nth-child(3) { animation-delay: .14s; }
+  .grid2 .card { animation-delay: .2s; } .grid2 .card + .card { animation-delay: .27s; }
+  @keyframes rise { to { opacity: 1; transform: none; } }
+  .card.hero { background: linear-gradient(135deg, rgba(166, 107, 255, .32), rgba(95, 215, 255, .10)); }
+  .label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.live { background: var(--good); box-shadow: 0 0 0 0 rgba(102, 224, 154, .7); animation: pulse 2s infinite; }
+  .dot.purple { background: var(--accent); }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 9px rgba(102, 224, 154, 0); } 100% { box-shadow: 0 0 0 0 rgba(102, 224, 154, 0); } }
+  .big { font-size: 46px; font-weight: 800; margin: 6px 0 2px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .sub { color: var(--muted); font-size: 12.5px; }
+  .bar { height: 6px; border-radius: 6px; background: var(--bar); margin-top: 14px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; border-radius: 6px; background: linear-gradient(90deg, var(--accent), var(--accent2));
+             transition: width 1s cubic-bezier(.2, .8, .2, 1); }
+  h2 { margin: 0; font-size: 17px; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+  .head span { color: var(--muted); font-size: 12px; }
+  .row { margin-top: 16px; }
+  .row .top { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; }
+  .row .top > span:last-child { text-align: right; flex-shrink: 0; }
+  .row .top span { color: var(--muted); font-size: 12px; font-weight: 400; }
+  .row .top b { color: var(--text); }
+  .badge { white-space: nowrap; font-style: normal; font-size: 10px; padding: 2px 8px; border-radius: 999px; margin-left: 6px; background: linear-gradient(90deg, var(--accent), #ff6fb0); color: #fff; }
+  .legend { display: flex; gap: 16px; margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .07); color: var(--muted); font-size: 12px; }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  footer { margin-top: 28px; color: var(--muted); font-size: 12px; text-align: center; }
+  .empty { color: var(--muted); font-size: 13px; margin-top: 14px; }
+  @media (max-width: 760px) {
+    .grid3, .grid2 { grid-template-columns: 1fr; }
+    .big { font-size: 40px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .card { animation: none; opacity: 1; transform: none; }
+    .dot.live { animation: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="stars"></canvas>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="logo">CBF</div>
+      <div><h1>Click Before Frames</h1><small>the input buffer for Geometry Dash</small></div>
+    </div>
+    <div class="actions">
+      <a class="btn" id="invite" href="#" target="_blank" rel="noopener" hidden>Join the Discord</a>
+      <span id="account"></span>
+    </div>
+  </header>
+
+  <section class="grid3">
+    <div class="card hero">
+      <div class="label"><span class="dot live"></span>Online now</div>
+      <div class="big" id="online">–</div>
+      <div class="sub" id="onlinePct">&nbsp;</div>
+      <div class="bar"><i id="onlineBar"></i></div>
+    </div>
+    <div class="card">
+      <div class="label"><span class="dot"></span>Offline</div>
+      <div class="big" id="offline" style="color: var(--muted)">–</div>
+      <div class="sub">Not playing right now</div>
+    </div>
+    <div class="card">
+      <div class="label"><span class="dot purple"></span>Players</div>
+      <div class="big" id="total">–</div>
+      <div class="sub">Everyone who's ever opened Click Before Frames</div>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <div class="head"><h2>Devices</h2><span id="devCount"></span></div>
+      <div class="sub">Who's playing, by device</div>
+      <div id="devices"></div>
+      <div class="legend"><span><i style="background: var(--good)"></i>Online</span><span><i style="background: var(--muted)"></i>Offline</span></div>
+    </div>
+    <div class="card">
+      <div class="head"><h2>Versions</h2><span id="verCount"></span></div>
+      <div class="sub">Which version this week's players are on</div>
+      <div id="versions"></div>
+    </div>
+  </section>
+
+  <footer>Counts are anonymous: each game sends a random id, its device type and version every 90 seconds. Turn it off in the mod's settings.<br><span id="updated"></span></footer>
+</div>
+
+<script>
+  const fmt = (n) => Number(n || 0).toLocaleString("en-US");
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  // numbers count up to their new value
+  function countTo(el, value) {
+    const from = Number(el.dataset.v || 0);
+    el.dataset.v = value;
+    const start = performance.now();
+    const step = (t) => {
+      const k = Math.min(1, (t - start) / 700);
+      const e = 1 - Math.pow(1 - k, 3);
+      el.textContent = fmt(Math.round(from + (value - from) * e));
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  function rows(list, render) {
+    return list.map(render).join("") || '<div class="empty">Nothing yet.</div>';
+  }
+
+  async function load() {
+    try {
+      const r = await fetch("/api/stats");
+      if (!r.ok) throw new Error();
+      const s = await r.json();
+      countTo(document.getElementById("online"), s.online);
+      countTo(document.getElementById("offline"), s.offline);
+      countTo(document.getElementById("total"), s.total);
+      const pct = s.total ? (s.online / s.total) * 100 : 0;
+      document.getElementById("onlinePct").textContent = `${pct < 1 && s.online ? "<1" : Math.round(pct)}% of all players`;
+      document.getElementById("onlineBar").style.width = `${Math.max(pct, s.online ? 1.5 : 0)}%`;
+
+      const maxDev = Math.max(1, ...s.platforms.map((p) => p.online + p.offline));
+      document.getElementById("devCount").textContent = `${s.platforms.length} devices`;
+      document.getElementById("devices").innerHTML = rows(s.platforms, (p) => `
+        <div class="row"><div class="top">${esc(p.name)}<span><b>${fmt(p.online)}</b> online · ${fmt(p.offline)} offline</span></div>
+        <div class="bar"><i style="width:${((p.online + p.offline) / maxDev) * 100}%"></i></div></div>`);
+
+      const vTotal = s.versions.reduce((a, v) => a + v.players, 0) || 1;
+      document.getElementById("verCount").textContent = `${s.versions.length} versions`;
+      document.getElementById("versions").innerHTML = rows(s.versions, (v, i) => `
+        <div class="row"><div class="top"><span style="color:var(--text);font-size:14px;font-weight:600">${esc(v.name)}${i === 0 ? '<em class="badge">MOST USED</em>' : ""}</span>
+        <span><b>${fmt(v.players)}</b> player${v.players === 1 ? "" : "s"} · ${Math.round((v.players / vTotal) * 100)}% · ${fmt(v.online)} online</span></div>
+        <div class="bar"><i style="width:${(v.players / vTotal) * 100}%"></i></div></div>`);
+
+      const inv = document.getElementById("invite");
+      if (s.discordInvite) { inv.href = s.discordInvite; inv.hidden = false; }
+      document.getElementById("updated").textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    } catch {
+      document.getElementById("updated").textContent = "Couldn't reach the server, trying again soon.";
+    }
+  }
+
+  async function account() {
+    const box = document.getElementById("account");
+    try {
+      const me = await (await fetch("/api/me")).json();
+      if (me) {
+        box.innerHTML = `<span class="me">${me.avatar ? `<img src="${esc(me.avatar)}" alt="">` : ""}${esc(me.name)}</span>
+          <a class="btn" href="/auth/logout">Log out</a>`;
+        return;
+      }
+    } catch {}
+    box.innerHTML = `<a class="btn discord" href="/auth/login">Log in with Discord</a>`;
+  }
+
+  // a slow star field
+  (function stars() {
+    const c = document.getElementById("stars"), g = c.getContext("2d");
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let w, h, list = [];
+    const size = () => {
+      w = c.width = innerWidth * devicePixelRatio; h = c.height = innerHeight * devicePixelRatio;
+      c.style.width = innerWidth + "px"; c.style.height = innerHeight + "px";
+      list = Array.from({ length: Math.round((innerWidth * innerHeight) / 9000) }, () => ({
+        x: Math.random() * w, y: Math.random() * h, r: (Math.random() * 1.2 + 0.3) * devicePixelRatio, t: Math.random() * 6.28, s: 0.6 + Math.random() }));
+    };
+    const draw = (time) => {
+      g.clearRect(0, 0, w, h);
+      for (const p of list) {
+        const a = 0.35 + 0.35 * Math.sin(p.t + time / 900 * p.s);
+        g.fillStyle = `rgba(230,225,255,${a})`;
+        g.beginPath(); g.arc(p.x, p.y, p.r, 0, 6.283); g.fill();
+      }
+      if (!reduce) requestAnimationFrame(draw);
+    };
+    addEventListener("resize", size); size(); requestAnimationFrame(draw);
+  })();
+
+  if (new URLSearchParams(location.search).get("login") === "failed") {
+    history.replaceState(null, "", "/");
+    alert("Discord login didn't go through. Try again.");
+  }
+  account();
+  load();
+  setInterval(load, 30000);
+</script>
+</body>
+</html>

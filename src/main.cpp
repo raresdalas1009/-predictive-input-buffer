@@ -52,6 +52,8 @@
 #include <fstream>
 #include <sstream>
 #include <thread>
+#include <atomic>
+#include <random>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -7714,6 +7716,84 @@ namespace {
     }
 }
 
+// test 66: online players. Every 90 s (setting "Show Online Players") the game sends the CBF server
+// an anonymous random id, its platform and the mod's version, nothing else; the server answers with
+// how many are online and offline, shown in the window's footer. The server's code is in web/.
+namespace online {
+    // the worker's address once it's deployed (web/README.md); empty = nothing is sent
+    constexpr char const* URL = "";
+    std::atomic<int> nowOnline { -1 };
+    std::atomic<int> nowOffline { -1 };
+    bool started = false;
+
+    std::string id() {
+        auto saved = Mod::get()->getSavedValue<std::string>("online-id", "");
+        if (saved.size() == 32) {
+            return saved;
+        }
+        std::random_device rd;
+        std::string made;
+        for (int i = 0; i < 32; ++i) {
+            made += "0123456789abcdef"[rd() % 16];
+        }
+        Mod::get()->setSavedValue("online-id", made);
+        return made;
+    }
+
+    char const* platform() {
+#if defined(GEODE_IS_WINDOWS)
+        return "Windows";
+#elif defined(GEODE_IS_ANDROID)
+        return "Android";
+#elif defined(GEODE_IS_IOS)
+        return "iOS";
+#elif defined(GEODE_IS_MACOS)
+        return "macOS";
+#else
+        return "Other";
+#endif
+    }
+
+    void start() {
+        if (started || std::string_view(URL).empty()) {
+            return;
+        }
+        started = true;
+        std::string body = fmt::format(R"({{"id":"{}","platform":"{}","version":"{}"}})", id(), platform(),
+            Mod::get()->getVersion().toVString());
+        std::thread([body] {
+            while (true) {
+                if (Mod::get()->getSettingValue<bool>("online-players")) {
+                    auto res = web::WebRequest()
+                        .timeout(std::chrono::seconds(10))
+                        .userAgent("ClickBeforeFrames")
+                        .header("Content-Type", "application/json")
+                        .bodyString(body)
+                        .postSync(std::string(URL) + "/api/ping");
+                    if (res.ok()) {
+                        if (auto json = res.json(); json.isOk()) {
+                            nowOnline = static_cast<int>(json.unwrap()["online"].asInt().unwrapOr(-1));
+                            nowOffline = static_cast<int>(json.unwrap()["offline"].asInt().unwrapOr(-1));
+                        }
+                    }
+                }
+                else {
+                    nowOnline = nowOffline = -1;
+                }
+                std::this_thread::sleep_for(std::chrono::seconds(90));
+            }
+        }).detach();
+    }
+
+    std::string text() {
+        int on = nowOnline, off = nowOffline;
+        if (on < 0) {
+            return "";
+        }
+        return fmt::format("{} online  ·  {} offline", on, off);
+    }
+}
+
 // v2.88 menu: a draggable window in a space theme (night-sky gradient, nebula, twinkling
 // stars, the odd shooting star) with a tab for each category: Buffer, Prediction, Modes,
 // Custom (each game mode's own frames) and Tools. Opens with the menu key in a level or the
@@ -7855,6 +7935,10 @@ private:
     bool m_dragging = false;
     float m_shootTimer = 2.f;
     CCNode* m_sky = nullptr;
+    // test 66: the online count in the footer
+    CCLabelBMFont* m_onlineLabel = nullptr;
+    CCDrawNode* m_onlineDot = nullptr;
+    float m_onlineTimer = 0.f;
     // test 65: motion (page cascade, theme wipe, closing, the autoplay panel)
     CCNode* m_side = nullptr;
     bool m_closing = false;
@@ -8177,6 +8261,13 @@ private:
         auto* foot = CCLayerColor::create({ m_t.main.r, m_t.main.g, m_t.main.b, 60 }, W - SIDE - 14.f, 0.6f);
         foot->setPosition({ SIDE + 6.f, FOOT });
         m_frame->addChild(foot, -1);
+        // test 66: who's online (from the CBF server)
+        m_onlineLabel = label(m_frame, online::text(), 0.34f, m_muted, { W - 32.f, FOOT / 2.f + 1.f }, { 1.f, 0.5f });
+        m_onlineDot = CCDrawNode::create();
+        circle(m_onlineDot, { 0.f, 0.f }, 2.6f, col({ 102, 224, 154 }, 1.f), 14);
+        m_frame->addChild(m_onlineDot);
+        m_onlineDot->setVisible(false);
+        refreshOnline();
 
         // the logo: a big glowing CBF with the version next to it
         for (int i = 3; i >= 1; --i) {
@@ -8827,7 +8918,22 @@ private:
 
     // ---------- motion: shooting stars ----------
 
+    void refreshOnline() {
+        if (!m_onlineLabel) {
+            return;
+        }
+        auto t = online::text();
+        m_onlineLabel->setString(t.c_str());
+        m_onlineDot->setVisible(!t.empty());
+        m_onlineDot->setPosition({ W - 37.f - m_onlineLabel->getScaledContentSize().width, FOOT / 2.f + 1.f });
+    }
+
     void update(float dt) override {
+        m_onlineTimer += dt;
+        if (m_onlineTimer > 1.f) {
+            m_onlineTimer = 0.f;
+            refreshOnline();
+        }
         m_shootTimer -= dt;
         if (m_shootTimer <= 0.f && m_sky && !m_light) {
             m_shootTimer = 3.5f + static_cast<float>(std::rand() % 400) / 100.f;
@@ -10247,6 +10353,7 @@ namespace {
 $on_mod(Loaded) {
     CBF_STEP("loaded: keybinds");
     setupKeybinds();
+    online::start();
     CBF_STEP("loaded: keybinds done");
     // v2.99.3: shows in the log whether the game reaches its first frame (iOS start crash hunt)
     queueInMainThread([] { CBF_STEP("first frame"); });
