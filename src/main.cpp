@@ -5369,6 +5369,11 @@ namespace {
     }
 
     void cbfOffForMacro();
+    // test 87: your Physics TPS setting (240 = the normal game)
+    double settingTps() {
+        return static_cast<double>(std::max<int64_t>(240, Mod::get()->getSettingValue<int64_t>("tps")));
+    }
+
     // test 84: which of the file's two click lists goes to player 1 in a 2-player level
     void macroSetSwap(bool swap) {
         autoplay.macroSwap = swap;
@@ -5383,13 +5388,13 @@ namespace {
 
     bool applyMacro(Macro const& m, std::string const& credit) {
         // test 71: like Nova, only a macro made at your TPS (a converted one never lines up)
-        if (std::abs(m.fps - st(240)) > 0.5) {
-            say("autoplay: the macro {} was made at {:.0f} TPS and you play at {}: it can't be used (set your TPS to {:.0f} to use it)", m.file, m.fps,
-                st(240), m.fps);
+        if (std::abs(m.fps - settingTps()) > 0.5) {
+            say("autoplay: the macro {} was made at {:.0f} TPS and you play at {:.0f}: it can't be used (set the mod's Physics TPS to {:.0f} to use it)",
+                m.file, m.fps, settingTps(), m.fps);
             return false;
         }
         auto* plNow = GameManager::get()->m_playLayer;
-        double k = st(240) / m.fps;
+        double k = settingTps() / m.fps;
         // test 70: outside 2-player levels the "player 2" clicks are yours too: the button is down
         // while either is
         auto* pl = GameManager::get()->m_playLayer;
@@ -5570,7 +5575,7 @@ namespace {
         onlineMacroTried.insert(levelId);
         say("autoplay: looking for a macro of this level on Hyperbolus...");
         std::filesystem::path dir = macroDir();
-        double tps = st(240);
+        double tps = settingTps();  // test 87: the setting (the measured step can still be 240's)
         std::string bad = "|" + Mod::get()->getSavedValue<std::string>(fmt::format("macro-bad-{}", levelId), "") + "|";
         std::thread([levelId, dir, tps, bad] {
             auto tell = [](std::string msg) { queueInMainThread([msg] { say("{}", msg); }); };
