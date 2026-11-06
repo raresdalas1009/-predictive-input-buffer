@@ -4990,6 +4990,8 @@ namespace online {
     void manualUpdate();
     std::string updateButtonText();
     bool updateAvailable();
+    std::string levelFingerprint(GJGameLevel* level);
+    void brainFetch(int levelId, std::string print);
 
     // test 89: a bot's position record for one frame (player 1, and player 2 if it has one)
     struct MacroFix {
