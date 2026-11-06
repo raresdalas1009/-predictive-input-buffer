@@ -4960,7 +4960,11 @@ namespace {
         int macroUntil = 0;  // played up to here (less after it keeps dying at one spot)
         int macroEnd = 0;
         size_t macroIdx = 0;
-        bool macroArmed = false;  // only from the start of an attempt
+        bool macroArmed = false;  // (test 70; test 71: not used)
+        std::vector<float> macroX;  // test 71: where each input is (from the macro's position records), for start positions
+        int attemptNo = 0;
+        int macroSyncedFor = -1;
+        bool macroByX = false;
         bool macroLogged = false;
         std::vector<int> macroDeaths;
         std::vector<int> deathTicks;  // where this session's attempts ended (learning backs off at repeats)
@@ -5179,6 +5183,7 @@ namespace {
         int levelId = 0;
         std::vector<std::pair<int, bool>> inputs;  // (macro frame, down) for player 1's jump
         std::vector<std::pair<int, bool>> inputs2;  // test 70: the same, marked as player 2's
+        std::vector<std::pair<int, float>> fixes;  // test 71: (frame, player 1's x) where the bot recorded it
         int lastFrame = 0;
     };
 
@@ -5260,6 +5265,14 @@ namespace {
             m.lastFrame = std::max(m.lastFrame, frame);
         }
         std::stable_sort(m.inputs2.begin(), m.inputs2.end(), [](auto const& a, auto const& b) { return a.first < b.first; });
+        if (j.contains("frameFixes") && j["frameFixes"].isArray()) {
+            for (auto const& f : j["frameFixes"]) {
+                if (f.contains("p1") && f["p1"].isObject() && f["p1"].contains("x")) {
+                    m.fixes.push_back({ static_cast<int>(f["frame"].asInt().unwrapOr(-1)), static_cast<float>(f["p1"]["x"].asDouble().unwrapOr(0.0)) });
+                }
+            }
+            std::sort(m.fixes.begin(), m.fixes.end());
+        }
         if (m.inputs.empty() && !m.inputs2.empty()) {
             // nothing for player 1 at all: player 2's are the clicks
             m.inputs.swap(m.inputs2);
@@ -5283,7 +5296,7 @@ namespace {
         autoplay.macro.clear();
         autoplay.macroUntil = autoplay.macroEnd = 0;
         autoplay.macroLogged = false;
-        if (!layer->m_level || layer->m_startPosObject) {
+        if (!layer->m_level) {
             return;
         }
         int id = layer->m_level->m_levelID.value();
@@ -5322,6 +5335,17 @@ namespace {
     }
 
     bool applyMacro(Macro const& m, std::string const& credit) {
+        // test 71: like Nova, only a macro made at your TPS (a converted one never lines up)
+        if (std::abs(m.fps - st(240)) > 0.5) {
+            say("autoplay: the macro {} was made at {:.0f} TPS and you play at {}: it can't be used (set your TPS to {:.0f} to use it)", m.file, m.fps,
+                st(240), m.fps);
+            return false;
+        }
+        auto* plNow = GameManager::get()->m_playLayer;
+        if (plNow && plNow->m_startPosObject && m.fixes.size() < 2) {
+            say("autoplay: the macro {} has no position records, so it only plays from the level's start (not from a start position)", m.file);
+            return false;
+        }
         double k = st(240) / m.fps;
         // test 70: outside 2-player levels the "player 2" clicks are yours too: the button is down
         // while either is
@@ -5366,6 +5390,20 @@ namespace {
         // and the first death replaced it with autoplay's own attempt). It's played by the game's step
         // counter, the way bots play it, from the start of an attempt
         autoplay.macro = ticks;
+        // test 71: each input's x, from the bot's position records (for playing from a start position)
+        autoplay.macroX.clear();
+        if (m.fixes.size() >= 2) {
+            for (auto const& [t, d] : ticks) {
+                double f = t / k;
+                auto it = std::lower_bound(m.fixes.begin(), m.fixes.end(), std::pair<int, float> { static_cast<int>(f), -1e9f });
+                if (it == m.fixes.end()) {
+                    it = std::prev(m.fixes.end());
+                }
+                autoplay.macroX.push_back(it->second);
+            }
+        }
+        autoplay.macroByX = plNow && plNow->m_startPosObject && !autoplay.macroX.empty();
+        autoplay.macroSyncedFor = -1;
         autoplay.macroUntil = until;
         autoplay.macroEnd = until;
         autoplay.macroIdx = 0;
@@ -5434,12 +5472,27 @@ namespace {
         onlineMacroTried.insert(levelId);
         say("autoplay: looking for a macro of this level on Hyperbolus...");
         std::filesystem::path dir = macroDir();
-        std::thread([levelId, dir] {
+        double tps = st(240);
+        std::thread([levelId, dir, tps] {
             auto tell = [](std::string msg) { queueInMainThread([msg] { say("{}", msg); }); };
             std::vector<OnlineMacro> list;
             int last = 1;
             for (int page = 1; page <= std::min(last, 8); ++page) {
-                auto data = hyperbolusPage(fmt::format("https://hyperbolus.net/level/{}/replays?page={}", levelId, page));
+                // test 71: Hyperbolus's own API (the level page's data before)
+                std::optional<matjson::Value> data;
+                auto api = web::WebRequest().timeout(std::chrono::seconds(20)).userAgent("ClickBeforeFrames")
+                    .getSync(fmt::format("https://hyperbolus.net/api/macros?level_id={}&format=gdr&page={}", levelId, page));
+                if (api.ok()) {
+                    if (auto j = api.json(); j.isOk()) {
+                        auto wrapped = matjson::Value::object();
+                        wrapped["props"] = matjson::Value::object();
+                        wrapped["props"]["replays"] = j.unwrap();
+                        data = wrapped;
+                    }
+                }
+                if (!data) {
+                    data = hyperbolusPage(fmt::format("https://hyperbolus.net/level/{}/replays?page={}", levelId, page));
+                }
                 if (!data) {
                     if (page == 1) {
                         return tell("autoplay: Hyperbolus has no macros of this level (or couldn't be reached)");
@@ -5483,7 +5536,7 @@ namespace {
                 }
                 return a.downloads > b.downloads;
             });
-            for (size_t i = 0; i < list.size() && i < 4; ++i) {
+            for (size_t i = 0; i < list.size() && i < 6; ++i) {
                 auto const& o = list[i];
                 auto file = web::WebRequest().timeout(std::chrono::seconds(60)).userAgent("ClickBeforeFrames").followRedirects(true).getSync(o.url);
                 if (!file.ok()) {
@@ -5495,6 +5548,9 @@ namespace {
                 auto m = parseMacro(data, o.file, why);
                 if (!m || (m->levelId != 0 && m->levelId != levelId)) {
                     continue;
+                }
+                if (std::abs(m->fps - tps) > 0.5) {
+                    continue;  // test 71: made at another TPS (it can't be used)
                 }
                 bool json = !data.empty() && data[0] == '{';
                 auto path = dir / fmt::format("{}{}", levelId, json ? ".gdr.json" : ".gdr");
@@ -5517,7 +5573,7 @@ namespace {
                 });
                 return;
             }
-            tell("autoplay: none of the Hyperbolus macros of this level could be read (GDR2 ones aren't supported yet)");
+            tell("autoplay: none of the Hyperbolus macros of this level could be used (made at another TPS, or GDR2, which isn't supported yet)");
         }).detach();
     }
 
@@ -6039,6 +6095,7 @@ namespace {
         autoplay.replayIdx = 0;
         autoplay.macroIdx = 0;
         autoplay.macroArmed = !autoplay.macro.empty();
+        ++autoplay.attemptNo;
         autoplay.userTouched = false;
         autoplay.diedThisAttempt = false;
         autoplay.reports = 0;
@@ -6047,7 +6104,7 @@ namespace {
 
     // a death: keep this attempt's inputs up to a bit before it (normal mode, bot-only attempts)
     void autoplayDied(PlayLayer* layer) {
-        if (layer->m_isPracticeMode || autoplay.userTouched) {
+        if (layer->m_isPracticeMode || (autoplay.userTouched && autoplay.macro.empty())) {
             return;
         }
         // test 70: with a macro, the macro stays. Dying twice at the same spot in it: it's played up
@@ -7813,9 +7870,36 @@ namespace {
         // Only a whole level learned to the end is replayed.
         // test 70: a macro: played by the game's step counter from the start of the attempt, the way
         // bots play it, up to where it keeps dying (then the route plans from there)
-        if (!autoplay.macro.empty() && autoplay.macroArmed && !layer->m_isPracticeMode && !autoplay.userTouched) {
+        // test 71: also in an attempt autoplay was started in the middle of (test 70 skipped those, so
+        // your own autoplay played first): the step counter counts from the attempt's start anyway, so
+        // the macro picks up where the attempt is. From a start position: by x, from its position records
+        if (!autoplay.macro.empty() && !layer->m_isPracticeMode) {
             int now = static_cast<int>(layer->m_gameState.m_currentProgress) + static_cast<int>(Mod::get()->getSettingValue<int64_t>("macro-offset"));
-            if (now < autoplay.macroUntil) {
+            float px = p1->getPositionX();
+            if (autoplay.macroSyncedFor != autoplay.attemptNo) {
+                autoplay.macroSyncedFor = autoplay.attemptNo;
+                size_t idx = 0;
+                while (idx < autoplay.macro.size() && (autoplay.macroByX ? autoplay.macroX[idx] <= px : autoplay.macro[idx].first < now)) {
+                    ++idx;
+                }
+                autoplay.macroIdx = idx;
+                autoplaySet(layer, idx > 0 && autoplay.macro[idx - 1].second);
+                say("autoplay: playing the macro {} (it comes first) from {}", autoplay.fromMacro,
+                    autoplay.macroByX ? fmt::format("x {:.0f}", px) : fmt::format("step {}", now));
+            }
+            if (autoplay.macroByX) {
+                bool any = false;
+                while (autoplay.macroIdx < autoplay.macro.size() && autoplay.macroX[autoplay.macroIdx] <= px) {
+                    autoplaySet(layer, autoplay.macro[autoplay.macroIdx].second);
+                    ++autoplay.macroIdx;
+                    any = true;
+                }
+                (void)any;
+                if (autoplay.macroIdx < autoplay.macro.size()) {
+                    return;
+                }
+            }
+            else if (now < autoplay.macroUntil) {
                 while (autoplay.macroIdx < autoplay.macro.size() && autoplay.macro[autoplay.macroIdx].first <= now) {
                     if (!autoplay.macroLogged) {
                         autoplay.macroLogged = true;
