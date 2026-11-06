@@ -5002,6 +5002,15 @@ namespace online {
         std::string code;        // the code the browser shows while linking
         std::string status;
 
+        // test 92: autoplay and updates need this game linked to Discord on the CBF site (checked with
+        // the site at start; the last answer is kept for when it can't be reached)
+        bool isLinked() {
+            if (stats.loaded) {
+                return stats.linked;
+            }
+            return !Mod::get()->getSavedValue<std::string>("account-name", "").empty();
+        }
+
         void refresh() {
             if (std::string_view(online::URL).empty()) {
                 return;
@@ -5031,9 +5040,7 @@ namespace online {
                 queueInMainThread([st] {
                     if (st.loaded) {
                         stats = st;
-                        if (st.linked) {
-                            Mod::get()->setSavedValue("account-name", st.name);
-                        }
+                        Mod::get()->setSavedValue("account-name", st.linked ? st.name : std::string());
                     }
                     else {
                         status = "Couldn't reach the CBF site.";
@@ -6266,6 +6273,10 @@ namespace online {
         }
         if (layer->m_isPlatformer) {
             *why = "Autoplay doesn't do platformer levels.";
+            return false;
+        }
+        if (!account::isLinked()) {
+            *why = "Autoplay needs this game linked to your Discord on the Click Before Frames site: open the menu, go to Account and press Link with Discord.";
             return false;
         }
         // test 85: 2-player levels are allowed: a macro plays both players (test 84); without one,
@@ -8317,11 +8328,46 @@ namespace online {
         }
     }
 
+    // test 92: the FPS guard. Your usual frame time is learned (the fastest frames of the last few
+    // seconds); while frames take over 15% longer than that, autoplay plans with less time a frame
+    // and checks less often, and goes back up slowly once they're quick again
+    double fpsScale = 1.0;
+    double frameBest = 0.0;
+    int frameBestAge = 0;
+    double frameAvg = 0.0;
+    int fpsLogged = 0;
+
+    void frameGuard(double frameMs) {
+        if (frameMs > 200.0) {
+            return;  // a hitch (loading, pausing), not the normal speed
+        }
+        if (frameBest <= 0.0 || frameMs < frameBest || ++frameBestAge > 600) {
+            frameBest = frameMs;
+            frameBestAge = 0;
+        }
+        frameAvg = frameAvg <= 0.0 ? frameMs : frameAvg * 0.9 + frameMs * 0.1;
+        double before = fpsScale;
+        if (frameAvg > frameBest * 1.15) {
+            fpsScale = std::max(0.25, fpsScale * 0.92);
+        }
+        else {
+            fpsScale = std::min(1.0, fpsScale * 1.01);
+        }
+        if (before >= 0.5 && fpsScale < 0.5 && fpsLogged < 5) {
+            ++fpsLogged;
+            say("autoplay: frames are slow ({:.1f} ms, usually {:.1f}): it plans with less time a frame for now", frameAvg, frameBest);
+        }
+    }
+
     bool routeTick(PlayLayer* layer, PlayerObject* p1, int at) {
         if (snapAll.empty() || snapOwner != layer) {
             return false;
         }
-        stepCheck(layer, p1);
+        // test 92: a debug tool: only with Drift Check on, and every 8th tick (it ran every tick)
+        bool sampleStep = buf.driftCheck && tickCount % 8 == 0;
+        if (sampleStep) {
+            stepCheck(layer, p1);
+        }
         stepChk.tick = -1;
         // are you where the route said you'd be?
         if (route.active && tickCount - 1 >= route.origin) {
@@ -8368,10 +8414,12 @@ namespace online {
         if (pf.active) {
             checkEnd = pf.commits > 0 ? pf.start : std::min(route.end, pf.death);
         }
-        if (route.active && tickCount - route.lastRecheck >= st(6) && checkEnd - tickCount > st(6)) {
+        // test 92: 20 times a second (was 40), 10 when frames are slow
+        int recheckEvery = fpsScale < 0.6 ? st(24) : st(12);
+        if (route.active && tickCount - route.lastRecheck >= recheckEvery && checkEnd - tickCount > st(6)) {
             route.lastRecheck = tickCount;
             RoutePoint here { tickCount, nullptr, buf.appliedInput };
-            int length = std::min(checkEnd, tickCount + st(720)) - tickCount;  // test 63: 3 s ahead (test 62: 2 s, before: 1 s)
+            int length = std::min(checkEnd, tickCount + (fpsScale < 0.6 ? st(480) : st(720))) - tickCount;  // test 63: 3 s ahead (test 92: 2 s while frames are slow)
             int lived = routeSim(layer, p1, here, route.flips, length, true);
             // the route's path off from where you'll really go (more than 3 units, while both live):
             // the route is put back onto you, keeping its inputs
@@ -8450,6 +8498,7 @@ namespace online {
             autoplay.frameMs = 0.0;
         }
         double frameMs = std::max(1.0, CCDirector::get()->getDeltaTime() * 1000.0);
+        frameGuard(frameMs);
         // v3.0 test 44: back to about half a frame (test 35's double time dropped the FPS)
 #ifdef GEODE_IS_MOBILE
         double budget = std::clamp(frameMs * 0.5, 2.0, 5.0);
@@ -8459,6 +8508,8 @@ namespace online {
         if (route.end - tickCount < st(60) || pf.active) {
             budget *= 1.5;  // the planned part is about to run out (test 58: or the pathfinder is racing you)
         }
+        // test 92: never more than your Prediction Budget setting, and less while frames are slow
+        budget = std::min(budget, std::max(2.0, buf.userBudget * 1.25)) * fpsScale;
         auto start = std::chrono::steady_clock::now();
         double left = budget - autoplay.frameMs;
         while (left > 0.2) {
@@ -8494,7 +8545,7 @@ namespace online {
             }
             want = !want;
         }
-        if (stepChk.snap && !p1->m_isDead) {
+        if (stepChk.snap && !p1->m_isDead && buf.driftCheck && (tickCount + 1) % 8 == 0) {
             // test 64: your state now, played one tick by the ghost next time
             copyState(stepChk.snap, p1);
             stepChk.tick = tickCount;
@@ -10647,6 +10698,11 @@ private:
 
     // test 90: check for / install the newest version
     void onUpdates(CCObject*) {
+        if (!account::isLinked()) {
+            s_tab = s_back = TAB_ACCOUNT;  // test 92: link first
+            rebuildPage();
+            return;
+        }
         manualUpdate();
         rebuildPage();
     }
@@ -10679,6 +10735,10 @@ private:
         }
         std::string why;
         if (!startAutoplay(&why)) {
+            if (!account::isLinked()) {
+                s_tab = s_back = TAB_ACCOUNT;  // test 92: straight to where you link
+                rebuildPage();
+            }
             FLAlertLayer::create("Autoplay", why, "OK")->show();
             return;
         }
@@ -11809,11 +11869,18 @@ namespace {
         if (updating) {
             return "Updating...";
         }
+        if (!account::isLinked()) {
+            return "Updates: Link Account";
+        }
         return updateAvailable() ? "Update to " + latestVersion : std::string("Check for Updates");
     }
 
     void manualUpdate() {
         if (updating) {
+            return;
+        }
+        if (!account::isLinked()) {
+            say("update: link this game to your Discord first (Account tab)");
             return;
         }
         if (updateAvailable()) {
@@ -11830,6 +11897,9 @@ namespace {
     void checkForUpdate() {
         if (updateChecked || (!updateAnywhere && !Mod::get()->getSettingValue<bool>("check-updates"))) {
             return;
+        }
+        if (!account::isLinked()) {
+            return;  // test 92: updates are for linked games
         }
         updateChecked = true;
         // v2.98: the check reads the newest GitHub release, the same file "Update now" installs
@@ -11923,6 +11993,7 @@ $on_mod(Loaded) {
     CBF_STEP("loaded: keybinds");
     setupKeybinds();
     online::start();
+    account::refresh();  // test 92: is this game linked (autoplay and updates need it)
     CBF_STEP("loaded: keybinds done");
     // v2.99.3: shows in the log whether the game reaches its first frame (iOS start crash hunt)
     queueInMainThread([] { CBF_STEP("first frame"); });
