@@ -7977,7 +7977,7 @@ namespace {
 // how many are online and offline, shown in the window's footer. The server's code is in web/.
 namespace online {
     // the worker's address once it's deployed (web/README.md); empty = nothing is sent
-    constexpr char const* URL = "";
+    constexpr char const* URL = "https://autumn-recipe-59ee.j6m7hh99sg.workers.dev";
     std::atomic<int> nowOnline { -1 };
     std::atomic<int> nowOffline { -1 };
     bool started = false;
