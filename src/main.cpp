@@ -5443,6 +5443,16 @@ namespace {
         autoplay.knowsWholeLevel = false;
         autoplay.fromMacro = credit.empty() ? m.file : credit;
         cbfOffForMacro();
+        // test 81: the shift found for this macro before
+        if (plNow && plNow->m_level) {
+            auto saved = Mod::get()->getSavedValue<std::string>(fmt::format("macro-shift-{}", plNow->m_level->m_levelID.value()), "");
+            auto bar = saved.find('|');
+            if (bar != std::string::npos && saved.substr(bar + 1) == autoplay.fromMacro) {
+                autoplay.macroAutoOffset = std::atoi(saved.substr(0, bar).c_str());
+                autoplay.macroTuned = true;
+                say("autoplay: plays it shifted {:+d} step(s), as found before", autoplay.macroAutoOffset);
+            }
+        }
         say("autoplay: plays the macro {}{}{} ({} inputs, {:.1f} s{})", m.file, m.author.empty() ? "" : " by " + m.author,
             m.bot.empty() ? "" : " (" + m.bot + ")", ticks.size(), until / static_cast<double>(st(240)),
             std::abs(m.fps - st(240)) > 0.5 ? fmt::format(", made at {:.0f} TPS, you're at {}", m.fps, st(240)) : "");
@@ -6245,6 +6255,11 @@ namespace {
                 autoplay.macroAutoOffset = MACRO_OFFSETS[best];
                 say("autoplay: the macro goes furthest shifted {:+d} step(s) (to step {}): it's played that way", autoplay.macroAutoOffset,
                     autoplay.macroReach[best]);
+                // test 81: remembered for this macro, so the next session doesn't try them all again
+                if (layer->m_level) {
+                    Mod::get()->setSavedValue(fmt::format("macro-shift-{}", layer->m_level->m_levelID.value()),
+                        fmt::format("{}|{}", autoplay.macroAutoOffset, autoplay.fromMacro));
+                }
                 autoplay.macroDeaths.clear();
                 autoplay.macroDeaths.push_back(autoplay.macroReach[best] + autoplay.macroAutoOffset);
                 return;
@@ -10583,7 +10598,9 @@ class $modify(BufPlayLayer, PlayLayer) {
 
     void resetLevel() {
         // v3.0 test 9: an attempt that ended in a real death (the game restarts with you dead)
-        if (autoplay.active && autoplay.layer == this && m_player1 && m_player1->m_isDead) {
+        // test 81: or player 2 died in a dual part (player 1 isn't dead then)
+        bool p2Died = m_gameState.m_isDualMode && m_player2 && m_player2->m_isDead;
+        if (autoplay.active && autoplay.layer == this && ((m_player1 && m_player1->m_isDead) || p2Died || autoplay.diedThisAttempt)) {
             autoplayDied(this);
         }
         triggerChecks.clear();  // v2.84
