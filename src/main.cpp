@@ -10093,7 +10093,10 @@ class $modify(BufPlayLayer, PlayLayer) {
     void destroyPlayer(PlayerObject* player, GameObject* object) {
         // (v3.0 test 9: the game "kills" you with its hidden anticheat spike in the first ticks of
         // every attempt; that isn't a death, and it made autoplay learn nothing)
-        if (autoplay.active && !buf.simulating && player == m_player1 && !player->m_isDead && object != m_anticheatSpike &&
+        // test 76: player 2 dying in a dual part is a death too (tests 27-75 didn't see it: no log, and a
+        // macro that died there was never planned around)
+        bool p2Dual = player == m_player2 && m_gameState.m_isDualMode && m_player1 && !m_player1->m_isDead;
+        if (autoplay.active && !buf.simulating && (player == m_player1 || p2Dual) && !player->m_isDead && object != m_anticheatSpike &&
             !autoplay.diedThisAttempt) {
             int at = autoplay.attemptTick;
             bool replaying = !m_isPracticeMode && autoplay.knownUntil > 0 && at <= autoplay.knownUntil;
@@ -10107,6 +10110,9 @@ class $modify(BufPlayLayer, PlayLayer) {
             say("  you hit object {} (type {}) at x {:.0f} y {:.0f} when at x {:.0f} y {:.0f} | {}", object ? object->m_objectID : 0,
                 object ? static_cast<int>(object->m_objectType) : -1, object ? object->getPositionX() : 0.f, object ? object->getPositionY() : 0.f,
                 player->getPositionX(), player->getPositionY(), autoplay.killer.empty() ? "no ghost report" : autoplay.killer);
+            if (p2Dual) {
+                say("  (that was player 2, in a dual part)");
+            }
             if (route.active) {
                 say("  route: planned {} ticks past you{}; {} tests so far, {:.2f} ms each", route.end - tickCount,
                     route.stuck ? " (stuck)"
