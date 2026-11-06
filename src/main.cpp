@@ -5910,9 +5910,10 @@ namespace {
             *why = "Autoplay doesn't do platformer levels.";
             return false;
         }
+        // test 85: 2-player levels are allowed: a macro plays both players (test 84); without one,
+        // autoplay plays player 1 only
         if (layer->m_level && layer->m_level->m_twoPlayerMode) {
-            *why = "Autoplay doesn't do 2-player levels.";
-            return false;
+            say("autoplay: a 2-player level: a macro plays both players; without one, autoplay plays player 1 only");
         }
         if (!buf.ghost1 || buf.owner != layer) {
             *why = "The level isn't ready yet, try again in a moment.";
@@ -9606,7 +9607,7 @@ private:
                             : inLevel ? std::string("Starts from where you are. Close the menu to watch.")
                                       : std::string("Open a level, then start it from the pause menu."),
             0.36f, m_muted, { rx + colW / 2.f, top - 102.f })->limitLabelWidth(colW - 16.f, 0.36f, 0.15f);
-        label(m_page, "Not for platformer or 2-player levels.", 0.34f, m_muted, { rx + colW / 2.f, top - 114.f })
+        label(m_page, "Not for platformer levels. 2-player: with a macro.", 0.34f, m_muted, { rx + colW / 2.f, top - 114.f })
             ->limitLabelWidth(colW - 16.f, 0.34f, 0.15f);
         {
             float y = top - 136.f;
@@ -9840,6 +9841,16 @@ private:
             side->setPositionX(outX);
             side->runAction(CCSequence::create(CCEaseExponentialIn::create(CCMoveTo::create(0.3f, { inX, 0.f })), CCRemoveSelf::create(), nullptr));
         }
+    }
+
+    // test 85: the game's popup opening scales the window to 1x, over your UI Scale (0.7 opened at
+    // full size): the opening is redone to your scale
+    void show() override {
+        Popup::show();
+        float sc = std::clamp(Mod::get()->getSavedValue<float>("ui-scale", 1.f), 0.7f, 1.3f);
+        m_mainLayer->stopAllActions();
+        m_mainLayer->setScale(sc * 0.85f);
+        m_mainLayer->runAction(CCEaseBackOut::create(CCScaleTo::create(0.25f, sc)));
     }
 
     // closing: the window shrinks back and fades, then goes
