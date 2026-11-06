@@ -5210,6 +5210,7 @@ namespace {
         std::vector<std::pair<int, float>> fixes;  // test 71: (frame, player 1's x) where the bot recorded it
         int lastFrame = 0;
         double gameVersion = 0.0;  // test 77
+        bool ldm = false;  // test 86
     };
 
     std::optional<Macro> parseMacro(std::vector<uint8_t> const& data, std::string const& fileName, std::string& why);
@@ -5263,6 +5264,7 @@ namespace {
         m.bot = botInfo.contains("name") ? botInfo["name"].asString().unwrapOr("") : "";
         m.fps = j["framerate"].asDouble().unwrapOr(240.0);
         m.gameVersion = j.contains("gameVersion") ? j["gameVersion"].asDouble().unwrapOr(0.0) : 0.0;
+        m.ldm = j.contains("ldm") && j["ldm"].asBool().unwrapOr(false);
         if (!(m.fps >= 30.0 && m.fps <= 100000.0)) {
             m.fps = 240.0;
         }
@@ -5507,6 +5509,9 @@ namespace {
                 say("autoplay: plays it shifted {:+d} step(s){}, as found before", autoplay.macroAutoOffset, autoplay.macroSwap ? ", players swapped" : "");
             }
         }
+        if (m.ldm) {
+            say("autoplay: this macro was made with Low Detail Mode on: turn it on for this level if it dies where the two differ");
+        }
         say("autoplay: plays the macro {}{}{} ({} inputs, {:.1f} s{})", m.file, m.author.empty() ? "" : " by " + m.author,
             m.bot.empty() ? "" : " (" + m.bot + ")", ticks.size(), until / static_cast<double>(st(240)),
             std::abs(m.fps - st(240)) > 0.5 ? fmt::format(", made at {:.0f} TPS, you're at {}", m.fps, st(240)) : "");
@@ -5640,6 +5645,8 @@ namespace {
             };
             std::vector<Pick> picks;
             int skippedBad = 0;
+            std::map<int, int> otherTps;  // test 86: macros made at another TPS (which, how many)
+            bool anyLdm = false;
             for (size_t i = 0; i < list.size() && i < 8; ++i) {
                 auto const& o = list[i];
                 if (bad.find("|" + o.url + "|") != std::string::npos) {
@@ -5654,7 +5661,11 @@ namespace {
                 std::vector<uint8_t> data(bytes.begin(), bytes.end());
                 std::string why;
                 auto m = parseMacro(data, o.file, why);
-                if (!m || (m->levelId != 0 && m->levelId != levelId) || std::abs(m->fps - tps) > 0.5) {
+                if (m && (m->levelId == 0 || m->levelId == levelId) && std::abs(m->fps - tps) > 0.5) {
+                    ++otherTps[static_cast<int>(std::lround(m->fps))];
+                    continue;
+                }
+                if (!m || (m->levelId != 0 && m->levelId != levelId)) {
                     continue;
                 }
                 picks.push_back({ o, std::move(*m), std::move(data) });
@@ -5696,6 +5707,15 @@ namespace {
                     applyMacro(got, credit);
                 });
                 return;
+            }
+            if (!otherTps.empty()) {
+                // test 86: say which TPS to set (Grief's only macro is made at 360)
+                std::string which;
+                for (auto const& [t, n] : otherTps) {
+                    which += fmt::format("{}{} at {} TPS", which.empty() ? "" : ", ", n, t);
+                }
+                return tell(fmt::format("autoplay: Hyperbolus has macros of this level made at another TPS ({}); you play at {:.0f}. "
+                    "Set the mod's TPS setting to {} and start autoplay again to use one", which, tps, otherTps.rbegin()->first));
             }
             if (skippedBad > 0) {
                 return tell(fmt::format("autoplay: no other Hyperbolus macro of this level to try ({} failed here before); autoplay plays it itself", skippedBad));
@@ -5889,6 +5909,7 @@ namespace {
         buf.objIndex.clear();
         autoplay = {};
         buf.autoDangers.clear();
+        onlineMacroTried.clear();  // test 86: looked up again next start (after changing TPS, say)
     }
 
     // a level that was left without quitting: its label went with it, so it's only forgotten
