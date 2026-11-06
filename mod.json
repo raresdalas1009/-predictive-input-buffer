@@ -6,7 +6,7 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"version": "v3.0.0-alpha.88",
+	"version": "v3.0.0-alpha.89",
 	"id": "basu.input-buffer",
 	"name": "Click Before Frames",
 	"developer": "BASU",
@@ -385,6 +385,12 @@
 			"type": "bool",
 			"name": "Online Macros (Hyperbolus)",
 			"description": "When autoplay has no macro of yours for a level, it downloads one from Hyperbolus (hyperbolus.net, used with its owner's permission; macros by their uploaders, credited in the log and the autoplay panel). It's saved in the mod's macros folder and replayed from the next attempt. Off: nothing is downloaded.",
+			"default": true
+		},
+		"macro-fixes": {
+			"type": "bool",
+			"name": "Macro Position Fixes",
+			"description": "When a macro has the bot's position records (xdBot macros do), autoplay keeps you on the macro's path: a small difference in height or angle is set back to the recorded one each step, as xdBot does when it plays its macros. Off: the macro's inputs only.",
 			"default": true
 		},
 		"macro-offset": {

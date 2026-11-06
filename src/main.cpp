@@ -4909,6 +4909,14 @@ namespace {
     // the mod presses / lets go only when keeping the button as it is would crash sooner than
     // switching. The level is put in test mode, so the game saves nothing it plays; your own
     // clicks are ignored while it runs, and AUTOPLAY stays on screen.
+    // test 89: a bot's position record for one frame (player 1, and player 2 if it has one)
+    struct MacroFix {
+        int frame = 0;
+        float x = 0.f, y = 0.f, r = 0.f;
+        bool p2 = false;
+        float x2 = 0.f, y2 = 0.f, r2 = 0.f;
+    };
+
     struct Autoplay {
         bool active = false;
         PlayLayer* layer = nullptr;
@@ -4977,6 +4985,9 @@ namespace {
         std::vector<int> macroDeaths;
         std::vector<std::pair<int, int>> macroGaps;  // test 75: stretches autoplay plays itself, the macro the rest
         bool macroInGap = false;
+        std::vector<MacroFix> macroFixes;  // test 89: frames converted to steps
+        int macroFixCount = 0;
+        float macroFixMax = 0.f;
         int macroStepNow = 0;  // test 82: the macro's step as the game's step started (processCommands)
         // test 79: which step the macro's frame 0 is (bots differ by a step): tried in turn, the best kept
         int macroTry = 0;       // index into MACRO_OFFSETS while trying
@@ -5203,6 +5214,7 @@ namespace {
 
     struct Macro {
         std::string file, author, bot;
+        std::vector<MacroFix> fixFull;  // test 89
         double fps = 240.0;
         int levelId = 0;
         std::vector<std::pair<int, bool>> inputs;  // (macro frame, down) for player 1's jump
@@ -5297,9 +5309,24 @@ namespace {
             for (auto const& f : j["frameFixes"]) {
                 if (f.contains("p1") && f["p1"].isObject() && f["p1"].contains("x")) {
                     m.fixes.push_back({ static_cast<int>(f["frame"].asInt().unwrapOr(-1)), static_cast<float>(f["p1"]["x"].asDouble().unwrapOr(0.0)) });
+                    MacroFix fx;
+                    fx.frame = static_cast<int>(f["frame"].asInt().unwrapOr(-1));
+                    auto const& a = f["p1"];
+                    fx.x = static_cast<float>(a["x"].asDouble().unwrapOr(0.0));
+                    fx.y = a.contains("y") ? static_cast<float>(a["y"].asDouble().unwrapOr(0.0)) : 0.f;
+                    fx.r = a.contains("r") ? static_cast<float>(a["r"].asDouble().unwrapOr(0.0)) : 0.f;
+                    if (f.contains("p2") && f["p2"].isObject() && f["p2"].contains("y")) {
+                        auto const& b = f["p2"];
+                        fx.p2 = true;
+                        fx.x2 = b.contains("x") ? static_cast<float>(b["x"].asDouble().unwrapOr(0.0)) : fx.x;
+                        fx.y2 = static_cast<float>(b["y"].asDouble().unwrapOr(0.0));
+                        fx.r2 = b.contains("r") ? static_cast<float>(b["r"].asDouble().unwrapOr(0.0)) : 0.f;
+                    }
+                    m.fixFull.push_back(fx);
                 }
             }
             std::sort(m.fixes.begin(), m.fixes.end());
+            std::sort(m.fixFull.begin(), m.fixFull.end(), [](MacroFix const& a, MacroFix const& b) { return a.frame < b.frame; });
         }
         if (m.inputs.empty() && !m.inputs2.empty()) {
             // nothing for player 1 at all: player 2's are the clicks
@@ -5469,6 +5496,14 @@ namespace {
             }
         }
         autoplay.macroByX = plNow && plNow->m_startPosObject && !autoplay.macroX.empty();
+        autoplay.macroFixes.clear();
+        for (auto f : m.fixFull) {
+            f.frame = static_cast<int>(std::llround(f.frame * k));
+            autoplay.macroFixes.push_back(f);
+        }
+        if (!autoplay.macroFixes.empty()) {
+            say("autoplay: the macro has {} position records: you're kept on its path (setting: Macro Position Fixes)", autoplay.macroFixes.size());
+        }
         autoplay.macroSyncedFor = -1;
         autoplay.macroUntil = until;
         autoplay.macroEnd = until;
@@ -6322,6 +6357,11 @@ namespace {
         // to 0.5 s before there, and the route plans the rest
         if (!autoplay.macro.empty()) {
             int reached = macroNow(layer);
+            if (autoplay.macroFixCount > 0) {
+                say("autoplay: position records used {} times this attempt (most {:.2f} units)", autoplay.macroFixCount, autoplay.macroFixMax);
+                autoplay.macroFixCount = 0;
+                autoplay.macroFixMax = 0.f;
+            }
             // test 79: first find the step the macro lines up on: each shift gets an attempt
             if (!autoplay.macroTuned && !autoplay.macroByX && reached < autoplay.macroEnd && !autoplay.macroTrials.empty()) {
                 int raw = reached - autoplay.macroAutoOffset;
@@ -8235,6 +8275,7 @@ namespace {
         autoplay.attemptFlips.push_back({ autoplay.attemptTick, down });
     }
 
+    void macroApplyFix(PlayLayer* layer, PlayerObject* p1, int now);
     // test 84: player 2's button in a 2-player level
     void macroPress2(PlayLayer* layer, bool down) {
         if (autoplay.held2 == down) {
@@ -8312,6 +8353,42 @@ namespace {
                 macroPress2(layer, autoplay.macroP2[autoplay.macroIdx2].second);
                 ++autoplay.macroIdx2;
             }
+        }
+        macroApplyFix(layer, p1, now);
+    }
+
+    // test 89 (as xdBot plays its macros): the bot's position record nearest where you are (by x, the
+    // part that doesn't drift) puts you back on the macro's height and angle when you're slightly off,
+    // so small physics differences don't add up into a death
+    void macroApplyFix(PlayLayer* layer, PlayerObject* p1, int now) {
+        if (autoplay.macroFixes.empty() || !Mod::get()->getSettingValue<bool>("macro-fixes")) {
+            return;
+        }
+        auto& fx = autoplay.macroFixes;
+        auto it = std::lower_bound(fx.begin(), fx.end(), now - 3, [](MacroFix const& f, int v) { return f.frame < v; });
+        float px = p1->getPositionX();
+        MacroFix const* best = nullptr;
+        for (; it != fx.end() && it->frame <= now + 2; ++it) {
+            if (!best || std::abs(it->x - px) < std::abs(best->x - px)) {
+                best = &*it;
+            }
+        }
+        if (!best || std::abs(best->x - px) > 2.5f) {
+            return;  // no record here, or you're somewhere else (a teleport): leave it
+        }
+        auto fix = [&](PlayerObject* p, float y, float r) {
+            float dy = y - p->getPositionY();
+            if (std::abs(dy) < 0.01f || std::abs(dy) > 20.f) {
+                return;
+            }
+            p->setPositionY(y);
+            p->setRotation(r);
+            ++autoplay.macroFixCount;
+            autoplay.macroFixMax = std::max(autoplay.macroFixMax, std::abs(dy));
+        };
+        fix(p1, best->y, best->r);
+        if (best->p2 && layer->m_gameState.m_isDualMode && layer->m_player2 && !layer->m_player2->m_isDead) {
+            fix(layer->m_player2, best->y2, best->r2);
         }
     }
 
