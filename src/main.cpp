@@ -5586,6 +5586,7 @@ namespace online {
     // the macro for this level: a file named after the level id (76962930.gdr), or any file whose
     // level id inside matches
     void loadLocalMacro(PlayLayer* layer);
+    void macroRestoreBest(int lid);
     // v3.0.2: a run in the global brain comes first, over a macro you have (yours or a downloaded one):
     // the brain is asked, and only without a run there does autoplay look in your Macros Folder, then
     // on Hyperbolus
@@ -5618,6 +5619,9 @@ namespace online {
         std::string why;
         for (auto const& e : std::filesystem::directory_iterator(macroDir(), ec)) {
             auto name = e.path().filename().string();
+            if (name.find(".best.") != std::string::npos) {
+                continue;  // v3.1.1: the best one kept aside while others are tried
+            }
             bool named = id > 0 && name.rfind(std::to_string(id) + ".", 0) == 0;
             auto ext = e.path().extension().string();
             if (!e.is_regular_file() || (ext != ".gdr" && ext != ".json")) {
@@ -6021,7 +6025,8 @@ namespace online {
                     "Set the mod's TPS setting to {} and start autoplay again to use one", which, tps, otherTps.rbegin()->first));
             }
             if (skippedBad > 0) {
-                return tell(fmt::format("autoplay: no other Hyperbolus macro of this level to try ({} failed here before); autoplay plays it itself", skippedBad));
+                queueInMainThread([levelId] { macroRestoreBest(levelId); });  // v3.1.1
+                return tell(fmt::format("autoplay: no other Hyperbolus macro of this level to try ({} failed here before)", skippedBad));
             }
             tell("autoplay: none of the Hyperbolus macros of this level could be used (made at another TPS, or GDR2, which isn't supported yet)");
         }).detach();
@@ -6765,6 +6770,54 @@ namespace online {
     }
 
     // a death: keep this attempt's inputs up to a bit before it (normal mode, bot-only attempts)
+    // v3.1.1: the macro that got furthest on a level, kept aside as <id>.best.gdr while others are tried
+    void macroKeepBest(int lid, int reached, std::string const& src) {
+        auto key = fmt::format("macro-best-{}", lid);
+        auto saved = Mod::get()->getSavedValue<std::string>(key, "");
+        int bestReach = saved.empty() ? -1 : std::atoi(saved.c_str());
+        if (reached <= bestReach) {
+            return;
+        }
+        std::error_code ec;
+        for (auto ext : { ".gdr", ".gdr.json" }) {
+            auto from = macroDir() / fmt::format("{}{}", lid, ext);
+            if (std::filesystem::exists(from, ec)) {
+                std::filesystem::remove(macroDir() / fmt::format("{}.best.gdr", lid), ec);
+                std::filesystem::remove(macroDir() / fmt::format("{}.best.gdr.json", lid), ec);
+                std::filesystem::copy_file(from, macroDir() / fmt::format("{}.best{}", lid, ext), ec);
+            }
+        }
+        Mod::get()->setSavedValue(key, fmt::format("{}\n{}", reached, src));
+    }
+
+    // no other macro to try: the best one comes back and stays
+    void macroRestoreBest(int lid) {
+        auto saved = Mod::get()->getSavedValue<std::string>(fmt::format("macro-best-{}", lid), "");
+        auto nl = saved.find('\n');
+        if (nl == std::string::npos) {
+            return;
+        }
+        std::error_code ec;
+        bool back = false;
+        for (auto ext : { ".gdr", ".gdr.json" }) {
+            auto from = macroDir() / fmt::format("{}.best{}", lid, ext);
+            if (std::filesystem::exists(from, ec)) {
+                std::filesystem::rename(from, macroDir() / fmt::format("{}{}", lid, ext), ec);
+                back = !ec;
+            }
+        }
+        if (!back) {
+            return;
+        }
+        Mod::get()->setSavedValue(fmt::format("macro-src-{}", lid), saved.substr(nl + 1));
+        Mod::get()->setSavedValue(fmt::format("macro-final-{}", lid), true);
+        say("autoplay: no other macro gets further: back to the best one (to step {}), and it's kept from now on", std::atoi(saved.c_str()));
+        auto* layer = GameManager::get()->m_playLayer;
+        if (autoplay.active && layer && layer->m_level && layer->m_level->m_levelID.value() == lid) {
+            loadLocalMacro(layer);
+        }
+    }
+
     // test 79; test 83: +1 first (Zodiac, Tidal Wave (iCreate) and Thinking Space II (xdBot) all lined up at +1)
     constexpr int MACRO_OFFSETS[5] = { 1, 0, -1, 2, -2 };
     int macroNow(PlayLayer* layer);
@@ -6843,6 +6896,27 @@ namespace online {
                     std::filesystem::remove(macroDir() / fmt::format("{}.gdr.json", lid), ec);
                     say("autoplay: the macro {} died twice at step {} ({:.0f}% into it): it's dropped, looking for another one", autoplay.fromMacro, reached,
                         100.0 * reached / std::max(1, autoplay.macroEnd));
+                    autoplay.macro.clear();
+                    autoplay.fromMacro.clear();
+                    onlineMacroTried.erase(lid);
+                    fetchOnlineMacro(lid);
+                    return;
+                }
+                // v3.1.1: a downloaded macro still dying at one spot after the guard and autoplay's own planning
+                // there (4 deaths): the next Hyperbolus macro is tried; the best one so far is kept aside
+                // and comes back if no other gets further
+                bool finalPick = lid > 0 && Mod::get()->getSavedValue<bool>(fmt::format("macro-final-{}", lid), false);
+                if (here >= 4 && fromSite && !finalPick) {
+                    macroKeepBest(lid, reached, src);
+                    auto key = fmt::format("macro-bad-{}", lid);
+                    auto badList = Mod::get()->getSavedValue<std::string>(key, "");
+                    Mod::get()->setSavedValue(key, badList.empty() ? src.substr(0, nl) : badList + "|" + src.substr(0, nl));
+                    Mod::get()->setSavedValue(fmt::format("macro-src-{}", lid), std::string());
+                    std::error_code ec;
+                    std::filesystem::remove(macroDir() / fmt::format("{}.gdr", lid), ec);
+                    std::filesystem::remove(macroDir() / fmt::format("{}.gdr.json", lid), ec);
+                    say("autoplay: the macro keeps dying at step {} ({:.0f}% into it): trying another Hyperbolus macro (this one is kept in case it's the best)",
+                        reached, 100.0 * reached / std::max(1, autoplay.macroEnd));
                     autoplay.macro.clear();
                     autoplay.fromMacro.clear();
                     onlineMacroTried.erase(lid);
@@ -10909,6 +10983,10 @@ private:
         Mod::get()->setSavedValue(fmt::format("macro-src-{}", id), std::string());
         Mod::get()->setSavedValue(fmt::format("macro-shift-{}", id), std::string());
         Mod::get()->setSavedValue(fmt::format("macro-bad-{}", id), std::string());
+        Mod::get()->setSavedValue(fmt::format("macro-best-{}", id), std::string());
+        Mod::get()->setSavedValue(fmt::format("macro-final-{}", id), false);
+        std::filesystem::remove(macroDir() / fmt::format("{}.best.gdr", id), ec);
+        std::filesystem::remove(macroDir() / fmt::format("{}.best.gdr.json", id), ec);
         say("autoplay: {} for this level; restart autoplay to look again (brain, then Hyperbolus)",
             removed ? "the macro is forgotten" : "no macro file named after this level (one with another name stays: delete it in the Macros folder)");
     }
