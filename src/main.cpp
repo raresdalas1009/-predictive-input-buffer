@@ -5627,8 +5627,23 @@ namespace online {
         }
         int id = layer->m_level->m_levelID.value();
         if (autoplay.brainSkipLevel != id) {
+            // alpha.20: the brain runs that failed in this game before, kept between sessions
             autoplay.brainSkip.clear();
             autoplay.brainSkipLevel = id;
+            auto saved = Mod::get()->getSavedValue<std::string>(fmt::format("brain-skip-{}", id), "");
+            for (size_t a = 0; a < saved.size();) {
+                size_t b = saved.find(',', a);
+                if (b == std::string::npos) {
+                    b = saved.size();
+                }
+                if (b - a == 64) {
+                    autoplay.brainSkip.push_back(saved.substr(a, 64));
+                }
+                a = b + 1;
+            }
+            if (autoplay.brainSkip.size() > 20) {
+                autoplay.brainSkip.erase(autoplay.brainSkip.begin(), autoplay.brainSkip.end() - 20);
+            }
         }
         autoplay.brainKey.clear();
         autoplay.brainReported = false;
@@ -5846,6 +5861,11 @@ namespace online {
         autoplay.macroEnd = until;
         autoplay.macroIdx = 0;
         autoplay.macroArmed = autoplay.attemptTick <= 1;
+        // alpha.20: a macro that arrives during an attempt starts it again from the beginning (it ran
+        // from partway before: an attempt that didn't count, and a death you watched for nothing)
+        if (plNow && autoplay.active && !plNow->m_startPosObject && autoplay.attemptTick > st(60)) {
+            autoplay.needRestart = true;
+        }
         autoplay.macroDeaths.clear();
         autoplay.macroGaps.clear();
         autoplay.macroInGap = false;
@@ -7100,6 +7120,13 @@ namespace online {
                     say("autoplay: the global brain's run died twice at step {} here: it's reported, asking the brain for its next best run", reached);
                     brainResult(false);
                     autoplay.brainSkip.push_back(autoplay.brainKey);
+                    {
+                        std::string list;
+                        for (auto const& k : autoplay.brainSkip) {
+                            list += (list.empty() ? "" : ",") + k;
+                        }
+                        Mod::get()->setSavedValue(fmt::format("brain-skip-{}", layer->m_level->m_levelID.value()), list);
+                    }
                     autoplay.brainKey.clear();
                     autoplay.macro.clear();
                     autoplay.fromMacro.clear();
