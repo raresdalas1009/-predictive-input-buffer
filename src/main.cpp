@@ -6899,10 +6899,11 @@ namespace online {
             autoplay.macroIsBrain) {
             return;
         }
-        // v3.1.1: a run a macro's position records kept on its path can't be replayed from its clicks
-        // alone: it would fail in every other game
-        if (autoplay.macroFixCount > 0 || autoplay.macroForceX) {
-            say("autoplay: the run isn't shared with the global brain: the macro's position records helped it, its clicks alone don't finish");
+        // v3.1.1: a run is shared with where you were along it (every 3 steps and at each click), so a
+        // run a macro's position records carried is shared too: the brain keeps the next game on the
+        // same path. Without them (shouldn't happen) clicks alone don't finish, so it isn't shared
+        if (autoplay.runFixes.size() < 10) {
+            say("autoplay: the run isn't shared with the global brain: no positions were recorded along it");
             return;
         }
         std::string inputs;
@@ -6920,14 +6921,15 @@ namespace online {
         std::string body = fmt::format(R"({{"id":"{}","level":{},"hash":"{}","tps":{},"name":{},"version":"{}","inputs":[{}],"fixes":[{}]}})", online::id(), layer->m_level->m_levelID.value(),
             levelFingerprint(layer->m_level), static_cast<int>(settingTps()), name, Mod::get()->getVersion().toVString(), inputs, fixes);
         size_t n = autoplay.runFlips.size();
-        std::thread([body, n] {
+        size_t pos = autoplay.runFixes.size();
+        std::thread([body, n, pos] {
             auto res = web::WebRequest().timeout(std::chrono::seconds(20)).userAgent("ClickBeforeFrames").header("Content-Type", "application/json")
                 .bodyString(body).postSync(std::string(online::URL) + "/api/runs");
             bool confirmed = res.ok() && res.string().unwrapOr("").find("\"confirmed\":true") != std::string::npos;
-            queueInMainThread([ok = res.ok(), confirmed, n] {
+            queueInMainThread([ok = res.ok(), confirmed, n, pos] {
                 say("autoplay: {}", !ok ? std::string("couldn't share the run with the global brain") :
                     confirmed ? fmt::format("the run ({} inputs) was already in the global brain: it counts as one more finish", n)
-                              : fmt::format("the run ({} inputs) is shared with the global brain: every game's autoplay can play it now", n));
+                              : fmt::format("the run ({} inputs, {} positions) is shared with the global brain: every game's autoplay can play it now", n, pos));
             });
         }).detach();
     }
