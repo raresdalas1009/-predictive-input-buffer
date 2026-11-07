@@ -5241,6 +5241,7 @@ namespace online {
         std::vector<MacroFix> runFixes;  // v3.1.1: where the player was (every 3 steps and at each click), shared with the run
         std::string levelPrint;
         bool macroIsBrain = false;
+        bool macroLdmMismatch = false;  // alpha.23: the macro's LDM isn't yours
         // v3.1.1: the brain run being played (its key on the site), and the ones that failed here
         std::string brainKey;
         std::vector<std::string> brainSkip;
@@ -5926,7 +5927,19 @@ namespace online {
                 say("autoplay: plays it shifted {:+d} step(s){}, as found before", autoplay.macroAutoOffset, autoplay.macroSwap ? ", players swapped" : "");
             }
         }
-        if (m.ldm) {
+        // alpha.23: Low Detail Mode changes some levels' gameplay (a high-detail trigger that hides a
+        // spike is gone in LDM): a macro only works with it set the way the macro was made (Heliopolis:
+        // made with it off, played with it on, dead at 7.1% every time, on the bot's exact path)
+        autoplay.macroLdmMismatch = false;
+        if (plNow && plNow->m_level && plNow->m_level->m_lowDetailMode) {
+            bool mine = plNow->m_level->m_lowDetailModeToggled;
+            if (mine != m.ldm) {
+                autoplay.macroLdmMismatch = true;
+                say("autoplay: WARNING: this macro was made with Low Detail Mode {} and you have it {}: it dies where the two differ. Turn LDM {} for this level (the level's page, before you play) and enter it again",
+                    m.ldm ? "ON" : "OFF", mine ? "ON" : "OFF", m.ldm ? "on" : "off");
+            }
+        }
+        else if (m.ldm) {
             say("autoplay: this macro was made with Low Detail Mode on: turn it on for this level if it dies where the two differ");
         }
         say("autoplay: plays the macro {}{}{} ({} inputs, {:.1f} s{})", m.file, m.author.empty() ? "" : " by " + m.author,
@@ -7062,6 +7075,9 @@ namespace online {
         if (!autoplay.macro.empty()) {
             int reached = macroNow(layer);
             if (autoplay.macroFixCount > 0) {
+                if (autoplay.macroLdmMismatch) {
+                    say("autoplay: (the macro's Low Detail Mode isn't yours: set LDM the way the macro was made, it's likely why it died)");
+                }
                 say("autoplay: position records used {} times this attempt (most {:.2f} units){}", autoplay.macroFixCount, autoplay.macroFixMax,
                     autoplay.macroFixSkipped ? fmt::format(", {} left out (they'd have put you inside a block or spike)", autoplay.macroFixSkipped) : "");
                 autoplay.macroFixCount = 0;
