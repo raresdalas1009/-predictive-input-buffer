@@ -364,7 +364,16 @@ async function runGet(url, env) {
     `SELECT level_id, level_hash, tps, steps, inputs, confirms, version FROM runs
      WHERE level_id = ?1 AND level_hash = ?2 AND tps = ?3 ORDER BY confirms DESC, last_confirm DESC LIMIT 1`
   ).bind(level, hash, tps).first();
-  if (!r) return json({ found: false });
+  if (!r) {
+    // v3.0.2: what the brain has for this level instead (other TPS, other versions), so the game can say why
+    let others = { tps: [], versions: 0 };
+    try {
+      const t = await env.DB.prepare(`SELECT DISTINCT tps FROM runs WHERE level_id = ?1 AND level_hash = ?2`).bind(level, hash).all();
+      const v = await env.DB.prepare(`SELECT COUNT(DISTINCT level_hash) AS n FROM runs WHERE level_id = ?1 AND level_hash != ?2`).bind(level, hash).first();
+      others = { tps: (t.results || []).map((x) => x.tps), versions: v?.n || 0 };
+    } catch {}
+    return json({ found: false, others });
+  }
   return json({ found: true, level: r.level_id, tps: r.tps, steps: r.steps, confirms: r.confirms, version: r.version, inputs: JSON.parse(r.inputs) });
 }
 

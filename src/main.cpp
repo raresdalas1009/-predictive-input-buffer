@@ -4951,6 +4951,10 @@ namespace online {
         if (started || std::string_view(URL).empty()) {
             return;
         }
+        // v3.0.2: test builds (a version like v3.0.2-alpha.1) aren't counted on the site
+        if (Mod::get()->getVersion().toVString().find('-') != std::string::npos) {
+            return;
+        }
         started = true;
         std::string body = fmt::format(R"({{"id":"{}","platform":"{}","version":"{}"}})", id(), platform(),
             Mod::get()->getVersion().toVString());
@@ -5581,12 +5585,29 @@ namespace online {
 
     // the macro for this level: a file named after the level id (76962930.gdr), or any file whose
     // level id inside matches
+    void loadLocalMacro(PlayLayer* layer);
+    // v3.0.2: a run in the global brain comes first, over a macro you have (yours or a downloaded one):
+    // the brain is asked, and only without a run there does autoplay look in your Macros Folder, then
+    // on Hyperbolus
     void loadMacro(PlayLayer* layer) {
         autoplay.fromMacro.clear();
         autoplay.macroIsBrain = false;
         autoplay.macro.clear();
         autoplay.macroUntil = autoplay.macroEnd = 0;
         autoplay.macroLogged = false;
+        if (!layer->m_level) {
+            return;
+        }
+        int id = layer->m_level->m_levelID.value();
+        if (id > 0 && !layer->m_level->m_twoPlayerMode && !std::string_view(online::URL).empty() &&
+            Mod::get()->getSettingValue<bool>("global-brain")) {
+            brainFetch(id, levelFingerprint(layer->m_level));  // without a run there: loadLocalMacro
+            return;
+        }
+        loadLocalMacro(layer);
+    }
+
+    void loadLocalMacro(PlayLayer* layer) {
         if (!layer->m_level) {
             return;
         }
@@ -5619,14 +5640,7 @@ namespace online {
             if (!why.empty()) {
                 say("autoplay: couldn't use the macro {}", why);
             }
-            // test 90: the global brain first, then Hyperbolus
-            if (id > 0 && !layer->m_level->m_twoPlayerMode && !std::string_view(online::URL).empty() &&
-                Mod::get()->getSettingValue<bool>("global-brain")) {
-                brainFetch(id, levelFingerprint(layer->m_level));
-            }
-            else {
-                fetchOnlineMacro(id);
-            }
+            fetchOnlineMacro(id);  // (the brain was asked first)
             return;
         }
         // test 77: one downloaded from Hyperbolus keeps its credit
@@ -6022,9 +6036,30 @@ namespace online {
                 .getSync(fmt::format("{}/api/runs?level={}&hash={}&tps={}", online::URL, levelId, print, tps));
             std::optional<Macro> got;
             int confirms = 0;
+            std::string why;
             if (res.ok()) {
                 if (auto j = res.json(); j.isOk()) {
                     auto v = j.unwrap();
+                    // v3.0.2: why there's no run for you (another TPS, another version of the level)
+                    if (v.contains("others") && v["others"].isObject()) {
+                        auto o = v["others"];
+                        std::string tpsList;
+                        if (o.contains("tps") && o["tps"].isArray()) {
+                            for (auto const& t : o["tps"]) {
+                                int tt = static_cast<int>(t.asInt().unwrapOr(0));
+                                if (tt > 0 && tt != tps) {
+                                    tpsList += fmt::format("{}{}", tpsList.empty() ? "" : ", ", tt);
+                                }
+                            }
+                        }
+                        int otherVersions = o.contains("versions") ? static_cast<int>(o["versions"].asInt().unwrapOr(0)) : 0;
+                        if (!tpsList.empty()) {
+                            why = fmt::format(" (it has runs of this level at {} TPS; you play at {})", tpsList, tps);
+                        }
+                        else if (otherVersions > 0) {
+                            why = " (it has runs only for another version of this level: it was updated, or your copy is older)";
+                        }
+                    }
                     if (v["found"].asBool().unwrapOr(false) && v["inputs"].isArray()) {
                         Macro m;
                         m.file = "global brain run";
@@ -6045,15 +6080,18 @@ namespace online {
                     }
                 }
             }
-            queueInMainThread([got, confirms, levelId] {
+            queueInMainThread([got, confirms, levelId, why] {
                 auto* layer = GameManager::get()->m_playLayer;
                 bool here = autoplay.active && layer && layer->m_level && layer->m_level->m_levelID.value() == levelId;
                 if (!got) {
-                    say("autoplay: the global brain has no run of this level yet");
+                    say("autoplay: the global brain has no run of this level for you yet{}", why);
                     if (here) {
-                        fetchOnlineMacro(levelId);
+                        loadLocalMacro(layer);  // v3.0.2: then your macros, then Hyperbolus
                     }
                     return;
+                }
+                if (here && !autoplay.fromMacro.empty() && !autoplay.macroIsBrain) {
+                    say("autoplay: the global brain's run comes first: {} isn't used", autoplay.fromMacro);
                 }
                 if (!here) {
                     return;
@@ -10350,7 +10388,9 @@ private:
                 false, 0, 18.f, take ? std::optional<ccColor3B>(ccColor3B { 80, 200, 120 }) : std::nullopt);
             button(menu, "Forget Level", menu_selector(BufferMenu::onForget), { PW / 2.f, y0 + PH - 90.f }, PW - 20.f);
             button(menu, "Show On Screen", menu_selector(BufferMenu::onConsole), { PW / 2.f, y0 + PH - 114.f }, PW - 20.f);
-            button(menu, "Macros Folder", menu_selector(BufferMenu::onMacros), { PW / 2.f, y0 + PH - 138.f }, PW - 20.f);
+            float hb = (PW - 26.f) / 2.f;
+            button(menu, "Macros", menu_selector(BufferMenu::onMacros), { 10.f + hb / 2.f, y0 + PH - 138.f }, hb);
+            button(menu, "Forget Macro", menu_selector(BufferMenu::onForgetMacro), { 16.f + hb * 1.5f, y0 + PH - 138.f }, hb);
             button(menu, "Stop Autoplay", menu_selector(BufferMenu::onAutoplay), { PW / 2.f, y0 + 18.f }, PW - 20.f, false, 0, 20.f,
                 ccColor3B { 235, 80, 90 });
             side->setPositionX(was ? outX : inX);
@@ -10721,6 +10761,28 @@ private:
         }
         manualUpdate();
         rebuildPage();
+    }
+
+    // v3.0.2: deletes this level's macro (the downloaded one, or yours named after the level) and its
+    // remembered shift; autoplay asks the brain / Hyperbolus again next time it starts
+    void onForgetMacro(CCObject*) {
+        auto* layer = GameManager::get()->m_playLayer;
+        if (!layer || !layer->m_level) {
+            return;
+        }
+        int id = layer->m_level->m_levelID.value();
+        std::error_code ec;
+        int removed = 0;
+        for (auto const& name : { fmt::format("{}.gdr", id), fmt::format("{}.gdr.json", id), fmt::format("{}.json", id) }) {
+            if (std::filesystem::remove(macroDir() / name, ec)) {
+                ++removed;
+            }
+        }
+        Mod::get()->setSavedValue(fmt::format("macro-src-{}", id), std::string());
+        Mod::get()->setSavedValue(fmt::format("macro-shift-{}", id), std::string());
+        Mod::get()->setSavedValue(fmt::format("macro-bad-{}", id), std::string());
+        say("autoplay: {} for this level; restart autoplay to look again (brain, then Hyperbolus)",
+            removed ? "the macro is forgotten" : "no macro file named after this level (one with another name stays: delete it in the Macros folder)");
     }
 
     // test 67: where to put a level's GDR macro
