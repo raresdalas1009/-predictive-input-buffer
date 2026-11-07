@@ -5232,6 +5232,13 @@ namespace online {
         // alpha.26: an xdBot macro is played exactly as xdBot plays it: its frame is the level time x TPS
         // + 1, its inputs and position records go in after the game's commands, once a frame
         bool macroXd = false;
+        // alpha.27: physics steps per game frame while an xdBot macro plays (1: 240 FPS; 4: 60 FPS).
+        // Some things (moving objects) only update on a frame's last step, so a macro made at 60 FPS
+        // only lines up when the game runs at 60 FPS too (Green Bullet "60fps": a moving spike was
+        // 36 units off with you exactly on the bot's path)
+        int xdFrameSteps = 1;
+        int xdFrameTry = 0;
+        std::vector<int> xdFrameReach;
         size_t xdFixIdx = 0;
         int xdLastFrame = -1;  // v3.1.1: made at another TPS: played by x from its position records
         std::vector<float> macroXA, macroXB, macroX2;  // each list's x (A/B as in the file; X2: player 2's)
@@ -5772,6 +5779,33 @@ namespace online {
         }
         autoplay.xdFixIdx = 0;
         autoplay.xdLastFrame = -1;
+        autoplay.xdFrameSteps = 1;
+        autoplay.xdFrameTry = 0;
+        autoplay.xdFrameReach.assign(3, -1);
+        if (autoplay.macroXd) {
+            // the FPS it was made at, from the file name ("60fps", "60 fps")
+            std::string n = m.file + " " + credit;
+            std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            for (size_t at = n.find("fps"); at != std::string::npos; at = n.find("fps", at + 3)) {
+                size_t e = at;
+                while (e > 0 && n[e - 1] == ' ') {
+                    --e;
+                }
+                size_t b = e;
+                while (b > 0 && std::isdigit(static_cast<unsigned char>(n[b - 1]))) {
+                    --b;
+                }
+                if (b < e) {
+                    int fps = std::atoi(n.substr(b, e - b).c_str());
+                    if (fps >= 30 && fps < 240) {
+                        autoplay.xdFrameSteps = std::max(1, static_cast<int>(std::lround(240.0 / fps)));
+                        say("autoplay: the macro says it was made at {} FPS: while it plays, the game runs {} physics steps a frame, as at {} FPS", fps,
+                            autoplay.xdFrameSteps, fps);
+                    }
+                    break;
+                }
+            }
+        }
         autoplay.macroAheadTry = 0;
         autoplay.macroAheadReach.assign(5, -1);
         autoplay.macroNudges.clear();
@@ -7271,6 +7305,25 @@ namespace online {
                 }
                 if (here >= 2 && autoplay.macroTwoPlayer) {
                     say("autoplay: the macro died at step {} again (2-player level: autoplay can't plan player 2, it plays the macro again)", reached);
+                }
+                else if (here >= 2 && autoplay.macroXd && autoplay.xdFrameTry < 3) {
+                    // alpha.27: the game's FPS while it plays: the one found first, then 60 and 240 FPS
+                    static constexpr int ORDER[3] = { 0, 4, 1 };
+                    auto& rs = autoplay.xdFrameReach;
+                    rs[autoplay.xdFrameTry] = std::max(rs[autoplay.xdFrameTry], reached);
+                    int first = autoplay.xdFrameTry == 0 ? autoplay.xdFrameSteps : -1;
+                    (void)first;
+                    while (++autoplay.xdFrameTry < 3) {
+                        int c = ORDER[autoplay.xdFrameTry];
+                        if (c != autoplay.xdFrameSteps) {
+                            autoplay.xdFrameSteps = c;
+                            autoplay.macroDeaths.pop_back();
+                            say("autoplay: the xdBot macro died at step {} again: trying it with the game at {} FPS (moving objects follow the game's frames)", reached,
+                                240 / c);
+                            return;
+                        }
+                    }
+                    say("autoplay: the xdBot macro died at step {} with every FPS tried: it's played as it is, the next macro is tried after 4 deaths here", reached);
                 }
                 else if (here >= 2 && autoplay.macroXd) {
                     say("autoplay: the xdBot macro died at step {} again: it's played as it is (no planning mixed in), the next macro is tried after 4 deaths here", reached);
@@ -13111,8 +13164,20 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
             tpsCarry -= steps * step;
         }
         tpsDriving = true;
-        for (int i = 0; i < steps; ++i) {
-            GJBaseGameLayer::update(static_cast<float>(step));
+        // alpha.27: an xdBot macro made at a lower FPS: several physics steps a game frame, as then
+        int chunk = (fixedStep && autoplay.macroXd && autoplay.xdFrameSteps > 1 && tpsOverride == 0) ? autoplay.xdFrameSteps : 1;
+        if (chunk > 1) {
+            static int heldSteps = 0;
+            heldSteps += steps;
+            while (heldSteps >= chunk) {
+                GJBaseGameLayer::update(static_cast<float>(step * chunk));
+                heldSteps -= chunk;
+            }
+        }
+        else {
+            for (int i = 0; i < steps; ++i) {
+                GJBaseGameLayer::update(static_cast<float>(step));
+            }
         }
         tpsDriving = false;
     }
