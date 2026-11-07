@@ -5215,6 +5215,9 @@ namespace online {
         int attemptNo = 0;
         int macroSyncedFor = -1;
         bool macroByX = false;
+        bool macroForceX = false;  // v3.1.1: made at another TPS: played by x from its position records
+        std::vector<float> macroXA, macroXB, macroX2;  // each list's x (A/B as in the file; X2: player 2's)
+        size_t fixPtr = 0;
         bool macroLogged = false;
         std::vector<int> macroDeaths;
         std::vector<std::pair<int, int>> macroGaps;  // test 75: stretches autoplay plays itself, the macro the rest
@@ -5669,6 +5672,12 @@ namespace online {
         return static_cast<double>(std::max<int64_t>(240, Mod::get()->getSettingValue<int64_t>("tps")));
     }
 
+    // v3.1.1: the steps a second the game really runs (the TPS setting doesn't change it on 2.2081:
+    // Grief's 360 TPS macro was played at 240 by time and died at once)
+    double physicsTps() {
+        return std::round(st(240) / 10.0) * 10.0;
+    }
+
     // test 84: which of the file's two click lists goes to player 1 in a 2-player level
     void macroSetSwap(bool swap) {
         autoplay.macroSwap = swap;
@@ -5677,19 +5686,27 @@ namespace online {
         }
         autoplay.macro = swap ? autoplay.macroB : autoplay.macroA;
         autoplay.macroP2 = swap ? autoplay.macroA : autoplay.macroB;
-        autoplay.macroX.clear();
+        autoplay.macroX = swap ? autoplay.macroXB : autoplay.macroXA;
+        autoplay.macroX2 = swap ? autoplay.macroXA : autoplay.macroXB;
         autoplay.macroSyncedFor = -1;
     }
 
     bool applyMacro(Macro const& m, std::string const& credit) {
-        // test 71: like Nova, only a macro made at your TPS (a converted one never lines up)
-        if (std::abs(m.fps - settingTps()) > 0.5) {
-            say("autoplay: the macro {} was made at {:.0f} TPS and you play at {:.0f}: it can't be used (set the mod's Physics TPS to {:.0f} to use it)",
-                m.file, m.fps, settingTps(), m.fps);
+        // test 71: like Nova, only a macro made at your TPS by time; v3.1.1: one made at another TPS with
+        // the bot's position records is played by x instead (each input where the bot pressed it)
+        bool otherTps = std::abs(m.fps - physicsTps()) > 0.5;
+        if (otherTps && m.fixes.size() < 100) {
+            say("autoplay: the macro {} was made at {:.0f} TPS, the game runs {:.0f}, and it has no position records to play it by: it can't be used",
+                m.file, m.fps, physicsTps());
             return false;
         }
         auto* plNow = GameManager::get()->m_playLayer;
-        double k = settingTps() / m.fps;
+        double k = otherTps ? 1.0 : physicsTps() / m.fps;
+        autoplay.macroForceX = otherTps;
+        if (otherTps) {
+            say("autoplay: the macro was made at {:.0f} TPS and the game runs {:.0f}: it's played by position (where the bot pressed), not by time",
+                m.fps, physicsTps());
+        }
         // test 70: outside 2-player levels the "player 2" clicks are yours too: the button is down
         // while either is
         auto* pl = GameManager::get()->m_playLayer;
@@ -5752,18 +5769,26 @@ namespace online {
         // counter, the way bots play it, from the start of an attempt
         autoplay.macro = ticks;
         // test 71: each input's x, from the bot's position records (for playing from a start position)
-        autoplay.macroX.clear();
-        if (m.fixes.size() >= 2) {
-            for (auto const& [t, d] : ticks) {
-                double f = t / k;
-                auto it = std::lower_bound(m.fixes.begin(), m.fixes.end(), std::pair<int, float> { static_cast<int>(f), -1e9f });
-                if (it == m.fixes.end()) {
-                    it = std::prev(m.fixes.end());
+        auto xsOf = [&](std::vector<std::pair<int, bool>> const& list) {
+            std::vector<float> xs;
+            if (m.fixes.size() >= 2) {
+                for (auto const& [t, d] : list) {
+                    double f = t / k;
+                    auto it = std::lower_bound(m.fixes.begin(), m.fixes.end(), std::pair<int, float> { static_cast<int>(f), -1e9f });
+                    if (it == m.fixes.end()) {
+                        it = std::prev(m.fixes.end());
+                    }
+                    xs.push_back(it->second);
                 }
-                autoplay.macroX.push_back(it->second);
             }
-        }
-        autoplay.macroByX = plNow && plNow->m_startPosObject && !autoplay.macroX.empty();
+            return xs;
+        };
+        autoplay.macroX = xsOf(ticks);
+        autoplay.macroXA = twoPlayer ? xsOf(autoplay.macroA) : autoplay.macroX;
+        autoplay.macroXB = twoPlayer ? xsOf(autoplay.macroB) : std::vector<float> {};
+        autoplay.macroX2 = autoplay.macroXB;
+        autoplay.fixPtr = 0;
+        autoplay.macroByX = autoplay.macroForceX || (plNow && plNow->m_startPosObject && !autoplay.macroX.empty());
         autoplay.macroFixes.clear();
         for (auto f : m.fixFull) {
             f.frame = static_cast<int>(std::llround(f.frame * k));
@@ -5878,7 +5903,7 @@ namespace online {
         onlineMacroTried.insert(levelId);
         say("autoplay: looking for a macro of this level on Hyperbolus...");
         std::filesystem::path dir = macroDir();
-        double tps = settingTps();  // test 87: the setting (the measured step can still be 240's)
+        double tps = physicsTps();  // v3.1.1: what the game really runs (the setting doesn't change it on 2.2081)
         std::string bad = "|" + Mod::get()->getSavedValue<std::string>(fmt::format("macro-bad-{}", levelId), "") + "|";
         std::thread([levelId, dir, tps, bad] {
             auto tell = [](std::string msg) { queueInMainThread([msg] { say("{}", msg); }); };
@@ -5969,7 +5994,7 @@ namespace online {
                 std::vector<uint8_t> data(bytes.begin(), bytes.end());
                 std::string why;
                 auto m = parseMacro(data, o.file, why);
-                if (m && (m->levelId == 0 || m->levelId == levelId) && std::abs(m->fps - tps) > 0.5) {
+                if (m && (m->levelId == 0 || m->levelId == levelId) && std::abs(m->fps - tps) > 0.5 && m->fixes.size() < 100) {
                     ++otherTps[static_cast<int>(std::lround(m->fps))];
                     continue;
                 }
@@ -5981,7 +6006,12 @@ namespace online {
             if (!picks.empty()) {
                 // test 88: 2.206+ first (2.2069 left out 2.206 macros, which work: Thinking Space II;
                 // Silent Acropolis's only working one), then ones with the bot's position records
-                std::stable_sort(picks.begin(), picks.end(), [](Pick const& a, Pick const& b) {
+                std::stable_sort(picks.begin(), picks.end(), [tps](Pick const& a, Pick const& b) {
+                    // v3.1.1: one made at your TPS first (another TPS plays by position: less exact)
+                    bool ta = std::abs(a.m.fps - tps) <= 0.5, tb = std::abs(b.m.fps - tps) <= 0.5;
+                    if (ta != tb) {
+                        return ta;
+                    }
                     bool na = a.m.gameVersion >= 2.2055, nb = b.m.gameVersion >= 2.2055;
                     if (na != nb) {
                         return na;
@@ -8758,7 +8788,7 @@ namespace online {
         if (autoplay.macro.empty() || layer->m_isPracticeMode) {
             return false;
         }
-        autoplay.macroByX = layer->m_startPosObject && !autoplay.macroX.empty();
+        autoplay.macroByX = autoplay.macroForceX || (layer->m_startPosObject && !autoplay.macroX.empty());
         return !layer->m_startPosObject || autoplay.macroByX;
     }
 
@@ -9004,7 +9034,8 @@ namespace online {
             macroPress(layer, idx > 0 && autoplay.macro[idx - 1].second);
             if (autoplay.macroTwoPlayer) {
                 size_t i2 = 0;
-                while (i2 < autoplay.macroP2.size() && autoplay.macroP2[i2].first < now) {
+                bool byX2 = autoplay.macroByX && autoplay.macroX2.size() == autoplay.macroP2.size();
+                while (i2 < autoplay.macroP2.size() && (byX2 ? autoplay.macroX2[i2] <= px : autoplay.macroP2[i2].first < now)) {
                     ++i2;
                 }
                 autoplay.macroIdx2 = i2;
@@ -9029,8 +9060,10 @@ namespace online {
             macroPress(layer, autoplay.macro[autoplay.macroIdx].second);
             ++autoplay.macroIdx;
         }
-        if (autoplay.macroTwoPlayer && !autoplay.macroByX) {
-            while (autoplay.macroIdx2 < autoplay.macroP2.size() && autoplay.macroP2[autoplay.macroIdx2].first <= now) {
+        if (autoplay.macroTwoPlayer) {
+            bool byX = autoplay.macroByX && autoplay.macroX2.size() == autoplay.macroP2.size();
+            while (autoplay.macroIdx2 < autoplay.macroP2.size() &&
+                   (byX ? autoplay.macroX2[autoplay.macroIdx2] <= px : autoplay.macroP2[autoplay.macroIdx2].first <= now)) {
                 macroPress2(layer, autoplay.macroP2[autoplay.macroIdx2].second);
                 ++autoplay.macroIdx2;
             }
@@ -9046,12 +9079,28 @@ namespace online {
             return;
         }
         auto& fx = autoplay.macroFixes;
-        auto it = std::lower_bound(fx.begin(), fx.end(), now - 3, [](MacroFix const& f, int v) { return f.frame < v; });
         float px = p1->getPositionX();
         MacroFix const* best = nullptr;
-        for (; it != fx.end() && it->frame <= now + 2; ++it) {
-            if (!best || std::abs(it->x - px) < std::abs(best->x - px)) {
-                best = &*it;
+        if (autoplay.macroForceX) {
+            // v3.1.1: by x (its frames are another TPS's): a pointer that moves along with you
+            if (autoplay.fixPtr >= fx.size() || fx[autoplay.fixPtr].x > px + 50.f) {
+                autoplay.fixPtr = 0;
+            }
+            while (autoplay.fixPtr + 1 < fx.size() && fx[autoplay.fixPtr + 1].x <= px) {
+                ++autoplay.fixPtr;
+            }
+            for (size_t i = autoplay.fixPtr; i < fx.size() && i < autoplay.fixPtr + 3; ++i) {
+                if (!best || std::abs(fx[i].x - px) < std::abs(best->x - px)) {
+                    best = &fx[i];
+                }
+            }
+        }
+        else {
+            auto it = std::lower_bound(fx.begin(), fx.end(), now - 3, [](MacroFix const& f, int v) { return f.frame < v; });
+            for (; it != fx.end() && it->frame <= now + 2; ++it) {
+                if (!best || std::abs(it->x - px) < std::abs(best->x - px)) {
+                    best = &*it;
+                }
             }
         }
         if (!best || std::abs(best->x - px) > 2.5f) {
