@@ -5904,7 +5904,7 @@ namespace online {
         say("autoplay: looking for a macro of this level on Hyperbolus...");
         std::filesystem::path dir = macroDir();
         double tps = physicsTps();  // v3.1.1: what the game really runs (the setting doesn't change it on 2.2081)
-        std::string bad = "|" + Mod::get()->getSavedValue<std::string>(fmt::format("macro-bad-{}", levelId), "") + "|";
+        std::string bad = "|" + Mod::get()->getSavedValue<std::string>(fmt::format("macro-bad2-{}", levelId), "") + "|";  // alpha.6: a new list (macros dropped before for another TPS are tried again)
         std::thread([levelId, dir, tps, bad] {
             auto tell = [](std::string msg) { queueInMainThread([msg] { say("{}", msg); }); };
             std::vector<OnlineMacro> list;
@@ -6931,7 +6931,7 @@ namespace online {
                 bool oldDownload = src.empty() && lid > 0 && autoplay.fromMacro.rfind(std::to_string(lid) + ".", 0) == 0;
                 if (here >= 2 && reached < autoplay.macroEnd / 20 && (fromSite || oldDownload)) {
                     if (fromSite) {
-                        auto key = fmt::format("macro-bad-{}", lid);
+                        auto key = fmt::format("macro-bad2-{}", lid);
                         auto badList = Mod::get()->getSavedValue<std::string>(key, "");
                         Mod::get()->setSavedValue(key, badList.empty() ? src.substr(0, nl) : badList + "|" + src.substr(0, nl));
                     }
@@ -6953,7 +6953,7 @@ namespace online {
                 bool finalPick = lid > 0 && Mod::get()->getSavedValue<bool>(fmt::format("macro-final-{}", lid), false);
                 if (here >= 4 && fromSite && !finalPick) {
                     macroKeepBest(lid, reached, src);
-                    auto key = fmt::format("macro-bad-{}", lid);
+                    auto key = fmt::format("macro-bad2-{}", lid);
                     auto badList = Mod::get()->getSavedValue<std::string>(key, "");
                     Mod::get()->setSavedValue(key, badList.empty() ? src.substr(0, nl) : badList + "|" + src.substr(0, nl));
                     Mod::get()->setSavedValue(fmt::format("macro-src-{}", lid), std::string());
@@ -11071,7 +11071,7 @@ private:
         }
         Mod::get()->setSavedValue(fmt::format("macro-src-{}", id), std::string());
         Mod::get()->setSavedValue(fmt::format("macro-shift-{}", id), std::string());
-        Mod::get()->setSavedValue(fmt::format("macro-bad-{}", id), std::string());
+        Mod::get()->setSavedValue(fmt::format("macro-bad2-{}", id), std::string());
         Mod::get()->setSavedValue(fmt::format("macro-best-{}", id), std::string());
         Mod::get()->setSavedValue(fmt::format("macro-final-{}", id), false);
         std::filesystem::remove(macroDir() / fmt::format("{}.best.gdr", id), ec);
