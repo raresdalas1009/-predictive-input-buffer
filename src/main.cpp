@@ -5799,8 +5799,8 @@ namespace online {
                     int fps = std::atoi(n.substr(b, e - b).c_str());
                     if (fps >= 30 && fps < 240) {
                         autoplay.xdFrameSteps = std::max(1, static_cast<int>(std::lround(240.0 / fps)));
-                        say("autoplay: the macro says it was made at {} FPS: while it plays, the game runs {} physics steps a frame, as at {} FPS", fps,
-                            autoplay.xdFrameSteps, fps);
+                        autoplay.xdFrameSteps = 1;  // alpha.28: only noted
+                        say("autoplay: the macro says it was made at {} FPS", fps);
                     }
                     break;
                 }
@@ -7286,7 +7286,9 @@ namespace online {
                     say("autoplay: every press timing tried: {:.2f} of a step ahead went furthest (to step {})", MACRO_AHEAD[best], rs[best]);
                 }
                 bool finalPick = lid > 0 && Mod::get()->getSavedValue<bool>(fmt::format("macro-final-{}", lid), false);
-                if (here >= 4 && fromSite && !finalPick) {
+                // alpha.28: an xdBot macro played like xdBot plays the same every time: dying twice at one
+                // spot, it won't get past it: the next one is tried
+                if ((here >= 4 || (autoplay.macroXd && here >= 2)) && fromSite && !finalPick) {
                     macroKeepBest(lid, reached, src);
                     auto key = fmt::format("macro-bad2-{}", lid);
                     auto badList = Mod::get()->getSavedValue<std::string>(key, "");
@@ -7306,7 +7308,7 @@ namespace online {
                 if (here >= 2 && autoplay.macroTwoPlayer) {
                     say("autoplay: the macro died at step {} again (2-player level: autoplay can't plan player 2, it plays the macro again)", reached);
                 }
-                else if (here >= 2 && autoplay.macroXd && autoplay.xdFrameTry < 3) {
+                else if (false && here >= 2 && autoplay.macroXd && autoplay.xdFrameTry < 3) {
                     // alpha.27: the game's FPS while it plays: the one found first, then 60 and 240 FPS
                     static constexpr int ORDER[3] = { 0, 4, 1 };
                     auto& rs = autoplay.xdFrameReach;
@@ -13165,7 +13167,8 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
         }
         tpsDriving = true;
         // alpha.27: an xdBot macro made at a lower FPS: several physics steps a game frame, as then
-        int chunk = (fixedStep && autoplay.macroXd && autoplay.xdFrameSteps > 1 && tpsOverride == 0) ? autoplay.xdFrameSteps : 1;
+        // (alpha.28: off: the game didn't take several steps a frame, it only slowed down)
+        int chunk = 1;
         if (chunk > 1) {
             static int heldSteps = 0;
             heldSteps += steps;
