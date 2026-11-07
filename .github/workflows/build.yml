@@ -1,83 +1,34 @@
 name: Build Mod
+
 on:
-  workflow_dispatch:
   push:
-    branches: [main]
+    branches: [ main ]
+
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
         config:
-        - name: Windows
-          os: windows-latest
-        - name: Android32
-          os: ubuntu-latest
-          target: Android32
-        - name: Android64
-          os: ubuntu-latest
-          target: Android64
-        - name: macOS
-          os: macos-latest
-        - name: iOS
-          os: macos-latest
-          target: iOS
+          - name: Android32
+            target: android32
+          - name: Android64
+            target: android64
+
     name: ${{ matrix.config.name }}
-    runs-on: ${{ matrix.config.os }}
+    runs-on: ubuntu-latest
+    
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
       - name: Build the mod
         uses: geode-sdk/build-geode-mod@main
+        # NO bindings specified - let the action handle it automatically
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          sdk: given  # the Geode version in mod.json
-          cli: latest
-          combine: true
-          target: ${{ matrix.config.target }}
-      - name: Show compile errors
-        if: failure()
-        shell: bash
-        run: |
-          for d in build*/ ; do
-            cmake --build "$d" 2>&1 | grep -E "error|Undefined|undefined|referenced from|ld: |symbol" | head -40 | sed 's/^/::error::/' || true
-          done
-  package:
-    name: Package builds
-    runs-on: ubuntu-latest
-    needs: ['build']
-    steps:
-      - uses: geode-sdk/build-geode-mod/combine@main
-        id: build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Build Output
-          path: ${{ steps.build.outputs.build-output }}
-  release:
-    name: Publish release
-    runs-on: ubuntu-latest
-    needs: ['package']
-    if: github.ref == 'refs/heads/main'
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: Build Output
-          path: out
-      - name: Create the release for a new version
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION=$(jq -r .version mod.json)
-          if gh release view "$VERSION" >/dev/null 2>&1; then
-            echo "Release $VERSION already exists"
-            exit 0
-          fi
-          FILE=$(find out -name '*.geode' | head -n 1)
-          if [ -z "$FILE" ]; then
-            echo "No .geode in the build output"
-            exit 1
-          fi
-          cp "$FILE" basu.input-buffer.geode
-          NOTES=$(tail -n 1 README.md)
-          gh release create "$VERSION" basu.input-buffer.geode --title "Click Before Frames $VERSION" --notes "$NOTES"
+          name: ${{ matrix.config.name }}
+          path: build/*.geode.
