@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS players (
   first_seen INTEGER NOT NULL,
   last_seen INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS players_last_seen ON players (last_seen);
+-- (v3.0.2: no index on last_seen: it doubled every write)
 
 -- people who logged in on the website with Discord
 CREATE TABLE IF NOT EXISTS users (

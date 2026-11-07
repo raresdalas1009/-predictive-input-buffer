@@ -15,7 +15,12 @@
 //   GET  /api/account   a linked game's stats (by its random id)
 //   everything else     the website in public/
 
-const ONLINE_FOR = 180;            // seconds since the last ping that still count as online
+// v3.0.2: the free D1 plan allows 100k rows written and 5M read a day. A game's row is written at
+// most every 9 minutes (its pings in between change nothing), so "online" = seen in the last 11
+// minutes; the numbers are counted at most once a minute and shared from Cloudflare's cache.
+const ONLINE_FOR = 660;            // seconds since the last write that still count as online
+const WRITE_EVERY = 540;           // a game's row is written at most this often
+const COUNT_CACHE = 60;            // the counts and the stats are recounted at most this often
 const VERSION_DAYS = 7;            // the versions list: games seen in the last week
 const PLATFORMS = ["Windows", "Android", "iOS", "macOS", "Linux"];
 const SESSION_DAYS = 30;
@@ -44,7 +49,7 @@ export default {
       if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/auth/")) return json({ error: "not found" }, 404);
       return env.ASSETS.fetch(request);
     } catch (e) {
-      return json({ error: "server error" }, 500);
+      return json({ error: "server error", detail: String((e && e.message) || e).slice(0, 300) }, 500);
     }
   },
 };
@@ -63,19 +68,28 @@ async function ping(request, env) {
   const platform = PLATFORMS.includes(body.platform) ? body.platform : "Other";
   const version = String(body.version || "?").replace(/[^0-9A-Za-z.\-+]/g, "").slice(0, 24) || "?";
   const now = Math.floor(Date.now() / 1000);
+  // written only when the last write is old (or the version changed): most pings write nothing
   await env.DB.prepare(
     `INSERT INTO players (id, platform, version, first_seen, last_seen) VALUES (?1, ?2, ?3, ?4, ?4)
-     ON CONFLICT(id) DO UPDATE SET platform = ?2, version = ?3, last_seen = ?4`
-  ).bind(id, platform, version, now).run();
-  if (body.closing === true) {
-    // the game is closing: not online any more
-    await env.DB.prepare(`UPDATE players SET last_seen = ?2 WHERE id = ?1`).bind(id, now - ONLINE_FOR - 1).run();
-  }
-  const s = await counts(env, now);
+     ON CONFLICT(id) DO UPDATE SET platform = ?2, version = ?3, last_seen = ?4
+     WHERE players.last_seen < ?5 OR players.version != ?3`
+  ).bind(id, platform, version, now, now - WRITE_EVERY).run();
+  const s = await cachedCounts(env, now);
   return json({ online: s.online, offline: s.offline, total: s.total });
 }
 
 // ---------- numbers for the website (and the mod's footer) ----------
+
+// counted at most once a minute; everyone gets the cached numbers in between
+async function cachedCounts(env, now) {
+  const key = new Request("https://cache.cbf/counts");
+  const cache = caches.default;
+  const hit = await cache.match(key);
+  if (hit) return await hit.json();
+  const c = await counts(env, now);
+  await cache.put(key, new Response(JSON.stringify(c), { headers: { "Cache-Control": `max-age=${COUNT_CACHE}` } }));
+  return c;
+}
 
 async function counts(env, now) {
   const r = await env.DB.prepare(
@@ -87,6 +101,15 @@ async function counts(env, now) {
 }
 
 async function stats(env) {
+  const key = new Request("https://cache.cbf/stats");
+  const hit = await caches.default.match(key);
+  if (hit) return new Response(hit.body, { headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=15" } });
+  const res = await statsFresh(env);
+  await caches.default.put(key, new Response(await res.clone().text(), { headers: { "Cache-Control": `max-age=${COUNT_CACHE}` } }));
+  return res;
+}
+
+async function statsFresh(env) {
   const now = Math.floor(Date.now() / 1000);
   const c = await counts(env, now);
   const plat = await env.DB.prepare(
