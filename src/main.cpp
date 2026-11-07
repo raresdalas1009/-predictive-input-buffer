@@ -5214,10 +5214,14 @@ namespace online {
         std::vector<float> macroX;  // test 71: where each input is (from the macro's position records), for start positions
         int attemptNo = 0;
         int macroSyncedFor = -1;
-        bool macroMidStart = false;
-        float macroLastPx = -1.f;
-        int macroAheadTry = 0;  // alpha.11: which press timing a position-played macro uses (see MACRO_AHEAD)
-        std::vector<int> macroAheadReach;  // alpha.10: x a step ago (how far a step goes)  // alpha.9: this attempt's macro began partway in (it was downloaded mid-attempt)
+        bool macroMidStart = false;  // alpha.9: this attempt's macro began partway in (it was downloaded mid-attempt)
+        float macroLastPx = -1.f;  // alpha.10: x a step ago (how far a step goes)
+        int macroAheadTry = 0;  // alpha.11 (unused since alpha.13)
+        std::vector<int> macroAheadReach;
+        // alpha.13: spots a position-played macro keeps dying at (x) -> which nudge it's on there, and
+        // the nudges done this attempt
+        std::map<int, int> macroNudges;
+        std::set<int> macroNudged;
         bool macroByX = false;
         bool macroForceX = false;  // v3.1.1: made at another TPS: played by x from its position records
         std::vector<float> macroXA, macroXB, macroX2;  // each list's x (A/B as in the file; X2: player 2's)
@@ -5709,6 +5713,7 @@ namespace online {
         autoplay.macroForceX = otherTps;
         autoplay.macroAheadTry = 0;
         autoplay.macroAheadReach.assign(5, -1);
+        autoplay.macroNudges.clear();
         if (otherTps) {
             say("autoplay: the macro was made at {:.0f} TPS and the game runs {:.0f}: it's played by position (where the bot pressed), not by time",
                 m.fps, physicsTps());
@@ -6884,6 +6889,7 @@ namespace online {
     // alpha.11: where in a step an input of a position-played macro goes in: the step whose x is
     // nearest the bot's (0.5 of a step ahead), then slightly later / earlier ones
     constexpr float MACRO_AHEAD[5] = { 0.5f, 0.25f, 0.75f, 0.f, 1.f };
+    constexpr float MACRO_NUDGE[4] = { 0.f, 0.5f, 0.25f, 0.75f };
 
     // test 79; test 83: +1 first (Zodiac, Tidal Wave (iCreate) and Thinking Space II (xdBot) all lined up at +1)
     constexpr int MACRO_OFFSETS[5] = { 1, 0, -1, 2, -2 };
@@ -6987,7 +6993,28 @@ namespace online {
                 // and comes back if no other gets further
                 // alpha.11: a position-played macro dying at one spot again: each press timing gets a try
                 // first (Grief: 4 deaths at 36.1%, 0.3 units off the bot's path), then the best is kept
-                if (autoplay.macroForceX && here >= 2 && autoplay.macroAheadTry < 5) {
+                // alpha.13: no: a timing for the whole level broke the start (0.25: dead at 0.6%). At the spot
+                // only, you're moved along the bot's own path by part of a step, so the game checks hits at
+                // other points of it (Grief 36.1%: you were on the bot's path, 0.3 units off, and still hit
+                // the spike between the points it was checked at)
+                if (autoplay.macroForceX && here >= 2 && layer->m_player1) {
+                    int dxAt = static_cast<int>(layer->m_player1->getPositionX());
+                    int key = dxAt;
+                    for (auto const& [k, v] : autoplay.macroNudges) {
+                        if (std::abs(k - dxAt) <= 12) {
+                            key = k;
+                        }
+                    }
+                    int& n = autoplay.macroNudges[key];
+                    if (n < 3) {
+                        ++n;
+                        autoplay.macroDeaths.pop_back();
+                        say("autoplay: the macro died at x {} again: just before it you're moved {:.2f} of a step along the bot's path (try {} of 3)",
+                            key, MACRO_NUDGE[n], n);
+                        return;
+                    }
+                }
+                if (false) {
                     auto& rs = autoplay.macroAheadReach;
                     rs[autoplay.macroAheadTry] = std::max(rs[autoplay.macroAheadTry], reached);
                     if (autoplay.macroAheadTry < 4) {
@@ -9085,6 +9112,7 @@ namespace online {
             autoplay.macroMidStart = !layer->m_startPosObject && px > 60.f;
             autoplay.macroLastPx = -1.f;
             autoplay.fixPtr = 0;
+            autoplay.macroNudged.clear();
             size_t idx = 0;
             while (idx < autoplay.macro.size() && (autoplay.macroByX ? autoplay.macroX[idx] <= px : autoplay.macro[idx].first < now)) {
                 ++idx;
@@ -9119,7 +9147,21 @@ namespace online {
         if (dx < 0.f || dx > 8.f) {
             dx = 0.f;
         }
-        float ahead = autoplay.macroForceX ? dx * MACRO_AHEAD[autoplay.macroAheadTry >= 5 ? autoplay.macroAheadTry - 5 : autoplay.macroAheadTry] : 0.f;
+        float ahead = autoplay.macroForceX ? dx * 0.5f : 0.f;
+        // alpha.13: the nudge at a spot it keeps dying at (once an attempt, 25 units before it)
+        if (autoplay.macroForceX && dx > 0.f && !autoplay.macroNudges.empty() && !(layer->m_gameState.m_isDualMode && layer->m_player2)) {
+            for (auto const& [k, n] : autoplay.macroNudges) {
+                if (n > 0 && n <= 3 && px >= k - 25.f && px < k - 5.f && !autoplay.macroNudged.contains(k)) {
+                    autoplay.macroNudged.insert(k);
+                    float nx = px + dx * MACRO_NUDGE[n], y, r;
+                    if (macroRecordAt(nx, y, r) && std::abs(y - p1->getPositionY()) <= 20.f) {
+                        p1->setPosition({ nx, y });
+                        p1->setRotation(r);
+                        px = nx;
+                    }
+                }
+            }
+        }
         while (autoplay.macroIdx < autoplay.macro.size() &&
                (autoplay.macroByX ? autoplay.macroX[autoplay.macroIdx] <= px + ahead : autoplay.macro[autoplay.macroIdx].first <= now)) {
             if (!autoplay.macroLogged) {
