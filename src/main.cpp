@@ -9149,18 +9149,6 @@ namespace online {
             dx = 0.f;
         }
         float ahead = autoplay.macroForceX ? dx * 0.5f : 0.f;
-        // alpha.13: the nudge at a spot it keeps dying at (once an attempt, 25 units before it)
-        if (autoplay.macroForceX && dx > 0.f && !autoplay.macroNudges.empty()) {
-            for (auto const& [k, n] : autoplay.macroNudges) {
-                if (n > 0 && n <= 3 && px >= k - 25.f && px < k - 5.f && !autoplay.macroNudged.contains(k)) {
-                    autoplay.macroNudged.insert(k);
-                    float nx = px + dx * MACRO_NUDGE[n];
-                    if (macroPlaceAt(layer, p1, nx)) {
-                        px = nx;
-                    }
-                }
-            }
-        }
         while (autoplay.macroIdx < autoplay.macro.size() &&
                (autoplay.macroByX ? autoplay.macroX[autoplay.macroIdx] <= px + ahead : autoplay.macro[autoplay.macroIdx].first <= now)) {
             if (!autoplay.macroLogged) {
@@ -9190,6 +9178,23 @@ namespace online {
                 }
                 macroPress2(layer, autoplay.macroP2[autoplay.macroIdx2].second);
                 ++autoplay.macroIdx2;
+            }
+        }
+        // alpha.13: the nudge at a spot it keeps dying at; alpha.15: after the presses and just before
+        // the spot (10 units): alpha.14 nudged 25 before, and the press after it snapped you back
+        if (autoplay.macroForceX && dx > 0.f && !autoplay.macroNudges.empty()) {
+            for (auto const& [k, n] : autoplay.macroNudges) {
+                if (n > 0 && n <= 3 && px >= k - 10.f && px < k - 2.f && !autoplay.macroNudged.contains(k)) {
+                    autoplay.macroNudged.insert(k);
+                    float nx = px + dx * MACRO_NUDGE[n];
+                    if (macroPlaceAt(layer, p1, nx)) {
+                        say("macro: moved {:.2f} units along the bot's path at x {:.1f} (before the spot at x {})", nx - px, px, k);
+                        px = nx;
+                    }
+                    else {
+                        say("macro: couldn't move you along the bot's path at x {:.1f} (no record there)", px);
+                    }
+                }
             }
         }
         macroApplyFix(layer, p1, now);
