@@ -5860,9 +5860,9 @@ namespace online {
                 auto head = saved.substr(0, bar);
                 autoplay.macroAutoOffset = std::atoi(head.c_str());
                 autoplay.macroTuned = true;
-                if (head.find('s') != std::string::npos) {
-                    macroSetSwap(true);
-                }
+                // alpha.12: either way (alpha.11 left the first guess's swap on when the saved one had none:
+                // Grief's best, unswapped to 36%, came back swapped)
+                macroSetSwap(head.find('s') != std::string::npos);
                 say("autoplay: plays it shifted {:+d} step(s){}, as found before", autoplay.macroAutoOffset, autoplay.macroSwap ? ", players swapped" : "");
             }
         }
