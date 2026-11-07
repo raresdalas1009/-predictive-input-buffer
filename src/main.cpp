@@ -5214,6 +5214,7 @@ namespace online {
         std::vector<float> macroX;  // test 71: where each input is (from the macro's position records), for start positions
         int attemptNo = 0;
         int macroSyncedFor = -1;
+        bool macroMidStart = false;  // alpha.9: this attempt's macro began partway in (it was downloaded mid-attempt)
         bool macroByX = false;
         bool macroForceX = false;  // v3.1.1: made at another TPS: played by x from its position records
         std::vector<float> macroXA, macroXB, macroX2;  // each list's x (A/B as in the file; X2: player 2's)
@@ -6892,6 +6893,13 @@ namespace online {
                 autoplay.macroFixCount = 0;
                 autoplay.macroFixMax = 0.f;
                 autoplay.macroFixSkipped = 0;
+            }
+            // alpha.9: an attempt the macro joined partway (it finished downloading mid-attempt) says
+            // nothing about it (Grief: the swapped try started at x 149, died at once, and lost to the other)
+            if (autoplay.macroMidStart) {
+                autoplay.macroMidStart = false;
+                say("autoplay: the macro started partway into that attempt: it doesn't count, it plays from the start now");
+                return;
             }
             // test 79: first find the step the macro lines up on: each shift gets an attempt
             if (!autoplay.macroTuned && (!autoplay.macroByX || autoplay.macroForceX) && reached < autoplay.macroEnd && !autoplay.macroTrials.empty()) {
@@ -9043,6 +9051,7 @@ namespace online {
         // the macro picks up where the attempt is: by step from the level's start, by x from a start pos
         if (autoplay.macroSyncedFor != autoplay.attemptNo) {
             autoplay.macroSyncedFor = autoplay.attemptNo;
+            autoplay.macroMidStart = !layer->m_startPosObject && px > 60.f;
             size_t idx = 0;
             while (idx < autoplay.macro.size() && (autoplay.macroByX ? autoplay.macroX[idx] <= px : autoplay.macro[idx].first < now)) {
                 ++idx;
