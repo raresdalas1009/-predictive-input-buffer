@@ -8729,13 +8729,13 @@ namespace online {
                 return;
             }
             // only within 2 s before a death the macro had
-            bool near = false;
+            bool nearDeath = false;  // ("near" is a macro in Windows headers)
             for (int d : autoplay.macroDeaths) {
                 if (d > nowStep && d - nowStep < st(480)) {
-                    near = true;
+                    nearDeath = true;
                 }
             }
-            if (!near) {
+            if (!nearDeath) {
                 return;
             }
             mguard.lastCheck = tickCount;
