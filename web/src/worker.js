@@ -42,6 +42,7 @@ export default {
       if (url.pathname === "/api/account") return await account(url, env);
       if (url.pathname === "/api/runs" && request.method === "POST") return await runUpload(request, env);
       if (url.pathname === "/api/runs" && request.method === "GET") return await runGet(url, env);
+      if (url.pathname === "/api/beaten") return await beatenList(env);
       if (url.pathname === "/api/latest") return await latest(env);
       if (url.pathname === "/download/latest") return await download(env);
       if (url.pathname === "/admin") return await adminPage(request, env);
@@ -553,4 +554,21 @@ async function account(url, env) {
     othersFinishedWithYours: othersUsed,
     recent: recent.map((r) => ({ id: r.id, name: r.name || `Level ${r.id}` })),
   });
+}
+
+// every level autoplay has finished 0-100% (the site's list), counted at most once a minute
+async function beatenList(env) {
+  const key = new Request("https://cache.cbf/beaten");
+  const hit = await caches.default.match(key);
+  if (hit) return new Response(hit.body, { headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=30" } });
+  let rows = [];
+  try {
+    rows = (await env.DB.prepare(
+      `SELECT level_id AS id, MAX(level_name) AS name, SUM(confirms) AS finishes, MAX(last_confirm) AS at
+       FROM runs GROUP BY level_id ORDER BY at DESC LIMIT 2000`
+    ).all()).results || [];
+  } catch {}
+  const body = JSON.stringify({ levels: rows.map((r) => ({ id: r.id, name: r.name || `Level ${r.id}`, finishes: r.finishes || 1, at: r.at })) });
+  await caches.default.put(key, new Response(body, { headers: { "Cache-Control": "max-age=60" } }));
+  return new Response(body, { headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=30" } });
 }

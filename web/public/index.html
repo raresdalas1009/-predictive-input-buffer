@@ -81,7 +81,17 @@
   .badge { white-space: nowrap; font-style: normal; font-size: 10px; padding: 2px 8px; border-radius: 999px; margin-left: 6px; background: linear-gradient(90deg, var(--accent), #ff6fb0); color: #fff; }
   .legend { display: flex; gap: 16px; margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .07); color: var(--muted); font-size: 12px; }
   .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
-  footer { margin-top: 28px; color: var(--muted); font-size: 12px; text-align: center; }
+  .thanks { margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .thanks .msg { font-size: 15px; font-weight: 600; }
+  .thanks .msg span { color: var(--muted); font-weight: 400; display: block; font-size: 13px; margin-top: 2px; }
+  .levels { margin-top: 16px; }
+  .levels input { width: 100%; margin-top: 12px; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--card-edge); background: rgba(0, 0, 0, .25);
+                  color: var(--text); font: 14px Poppins, sans-serif; outline: none; }
+  .levels input:focus { border-color: var(--accent); }
+  .lvl-list { margin-top: 10px; max-height: 420px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+  .lvl { padding: 10px 12px; border-radius: 12px; background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .06); }
+  .lvl b { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lvl span { color: var(--muted); font-size: 12px; }
   .empty { color: var(--muted); font-size: 13px; margin-top: 14px; }
   @media (max-width: 760px) {
     .grid3, .grid2 { grid-template-columns: 1fr; }
@@ -106,6 +116,11 @@
       <span id="account"></span>
     </div>
   </header>
+
+  <section class="card thanks">
+    <div class="msg">💜 Thanks for using Click Before Frames!<span>Every level your autoplay beats helps everyone's autoplay get better.</span></div>
+    <a class="btn discord" id="joinDiscord" href="#" target="_blank" rel="noopener" hidden>Join our Discord</a>
+  </section>
 
   <section class="grid3">
     <div class="card hero">
@@ -154,7 +169,12 @@
     </div>
   </section>
 
-  <footer>Counts are anonymous: each game sends a random id, its device type and version (online = active in the last 10 minutes), and autoplay's finished runs (the level and the button presses, nothing about you). Both can be turned off in the mod's settings.<br><span id="updated"></span></footer>
+  <section class="card levels">
+    <div class="head"><h2>Every level beaten by autoplay</h2><span id="lvlCount"></span></div>
+    <div class="sub">All the levels autoplay has finished from 0% to 100% so far</div>
+    <input id="lvlSearch" type="search" placeholder="Search a level name or ID">
+    <div class="lvl-list" id="lvlList"></div>
+  </section>
 </div>
 
 <script>
@@ -209,10 +229,13 @@
       document.getElementById("recent").innerHTML = rows(s.recentBeaten || [], (r) => `
         <div class="row"><div class="top">${esc(r.name)}<span>id ${r.id} · ${fmt(r.confirms)} finish${r.confirms === 1 ? "" : "es"}</span></div></div>`);
       const inv = document.getElementById("invite");
-      if (s.discordInvite) { inv.href = s.discordInvite; inv.hidden = false; }
-      document.getElementById("updated").textContent = `Updated ${new Date().toLocaleTimeString()}`;
+      if (s.discordInvite) {
+        inv.href = s.discordInvite; inv.hidden = false;
+        const j = document.getElementById("joinDiscord"); j.href = s.discordInvite; j.hidden = false;
+      }
+
     } catch {
-      document.getElementById("updated").textContent = "Couldn't reach the server, trying again soon.";
+
     }
   }
 
@@ -256,6 +279,25 @@
     history.replaceState(null, "", "/");
     alert("Discord login didn't go through. Try again.");
   }
+  let allLevels = [];
+  function showLevels() {
+    const q = document.getElementById("lvlSearch").value.trim().toLowerCase();
+    const list = allLevels.filter((l) => !q || l.name.toLowerCase().includes(q) || String(l.id).includes(q));
+    document.getElementById("lvlList").innerHTML = list.map((l) => `
+      <div class="lvl"><b>${esc(l.name)}</b><span>ID ${l.id} · ${fmt(l.finishes)} finish${l.finishes === 1 ? "" : "es"}</span></div>`).join("")
+      || '<div class="empty">No levels here yet.</div>';
+  }
+  async function loadLevels() {
+    try {
+      const r = await (await fetch("/api/beaten")).json();
+      allLevels = r.levels || [];
+      document.getElementById("lvlCount").textContent = `${fmt(allLevels.length)} levels`;
+      showLevels();
+    } catch {}
+  }
+  document.getElementById("lvlSearch").addEventListener("input", showLevels);
+  loadLevels();
+  setInterval(loadLevels, 120000);
   account();
   load();
   setInterval(load, 30000);
