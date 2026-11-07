@@ -9147,10 +9147,13 @@ namespace online {
         };
         auto fix = [&](PlayerObject* p, float y, float r) {
             float dy = y - p->getPositionY();
-            if (std::abs(dy) < 0.01f || std::abs(dy) > 20.f) {
+            // alpha.8: played by position the record is the bot's own spot at this x (no other TPS's
+            // timing in it): it's trusted, and a bigger drift is still pulled back (Grief's wave drifted
+            // 26 units up past 6 left-out records and died at 1.5%)
+            if (std::abs(dy) < 0.01f || std::abs(dy) > (autoplay.macroForceX ? 60.f : 20.f)) {
                 return;
             }
-            if (std::abs(dy) > 0.5f && blocked(p, dy)) {
+            if (!autoplay.macroForceX && std::abs(dy) > 0.5f && blocked(p, dy)) {
                 ++autoplay.macroFixSkipped;
                 return;
             }
