@@ -372,7 +372,9 @@ async function runUpload(request, env) {
   return json({ ok: true, confirmed: false });
 }
 
-// v3.1.1: runs that others replayed to the end come first, runs that keep failing go last.
+// v3.1.1: runs with position records come first (a run of clicks alone drifts off in another game;
+// v3.1.0 games also shared runs a Hyperbolus macro's records carried), then the ones others replayed
+// to the end, and runs that keep failing go last.
 // (Before, every run had 1 "finish" and the newest one was handed out, even one that never worked
 // for anybody else.) The columns are added to an older database on first use.
 let resultsReady = false;
@@ -405,7 +407,7 @@ async function runGet(url, env) {
   const r = await env.DB.prepare(
     `SELECT run_key, level_id, level_hash, tps, steps, inputs, confirms, replays, fails, version, fixes FROM runs
      WHERE level_id = ?1 AND level_hash = ?2 AND tps = ?3 ${skip.length ? `AND run_key NOT IN (${holes})` : ""}
-     ORDER BY (replays + confirms - fails) DESC, replays DESC, fails ASC, (fixes IS NOT NULL) DESC, created ASC LIMIT 1`
+     ORDER BY (fixes IS NOT NULL) DESC, (replays + confirms - fails) DESC, replays DESC, fails ASC, created ASC LIMIT 1`
   ).bind(level, hash, tps, ...skip).first();
   if (!r) {
     // v3.0.2: what the brain has for this level instead (other TPS, other versions), so the game can say why

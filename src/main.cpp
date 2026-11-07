@@ -9055,6 +9055,9 @@ namespace online {
         int attemptLogged = -1;
     };
     MacroGuard mguard;
+    // alpha.19: a death spot the guard found nothing for this attempt is left alone till the next one
+    // (Heliopolis: the same search 20 times an attempt, 20 log lines, and frames lost)
+    int mguardGaveUpStep = -1, mguardGaveUpAttempt = -1;
 
     std::vector<int> macroFlipsFrom(size_t from, int base, size_t changeIdx = SIZE_MAX, int shift = 0) {
         std::vector<int> flips;
@@ -9111,6 +9114,9 @@ namespace online {
             if (!known || lived < st(6)) {
                 return;  // not the death it had (or too close to change anything)
             }
+            if (mguardGaveUpAttempt == autoplay.attemptNo && std::abs(dStep - mguardGaveUpStep) < st(30)) {
+                return;
+            }
             mguard.searching = true;
             mguard.deathStep = dStep;
             mguard.need = std::min(length, lived + st(120));
@@ -9161,6 +9167,8 @@ namespace online {
         }
         if (mguard.next >= mguard.tries.size()) {
             mguard.searching = false;
+            mguardGaveUpStep = mguard.deathStep;
+            mguardGaveUpAttempt = autoplay.attemptNo;
             say("macro guard: no small change gets past step {}: autoplay plans that part after the next death", mguard.deathStep);
         }
     }
