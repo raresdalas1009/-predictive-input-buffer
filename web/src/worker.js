@@ -328,6 +328,21 @@ async function runUpload(request, env) {
     last = i[0];
   }
   const text = JSON.stringify(inputs);
+  // v3.1.1: where the player was (every 3 steps and at each click): [step, x, y, rotation(, y2, rotation2)]
+  let fixText = null;
+  if (Array.isArray(b.fixes) && b.fixes.length > 0) {
+    if (b.fixes.length > 40000) return json({ error: "bad fixes" }, 400);
+    let lastStep = -1;
+    for (const f of b.fixes) {
+      if (!Array.isArray(f) || (f.length !== 4 && f.length !== 6) || !f.every((v) => typeof v === "number" && Number.isFinite(v)) ||
+          !Number.isInteger(f[0]) || f[0] < lastStep) {
+        return json({ error: "bad fixes" }, 400);
+      }
+      lastStep = f[0];
+    }
+    fixText = JSON.stringify(b.fixes);
+  }
+  await ensureResults(env);
   const key = await sha256(`${level}|${hash}|${tps}|${text}`);
   const name = String(b.name || "").replace(/[\u0000-\u001f<>]/g, "").slice(0, 60);
   const version = String(b.version || "?").replace(/[^0-9A-Za-z.\-+]/g, "").slice(0, 24);
@@ -341,13 +356,13 @@ async function runUpload(request, env) {
   }
   const had = await env.DB.prepare(`SELECT id FROM runs WHERE run_key = ?1`).bind(key).first();
   if (had) {
-    await env.DB.prepare(`UPDATE runs SET confirms = confirms + 1, last_confirm = ?2 WHERE id = ?1`).bind(had.id, now).run();
+    await env.DB.prepare(`UPDATE runs SET confirms = confirms + 1, last_confirm = ?2, fixes = COALESCE(fixes, ?3) WHERE id = ?1`).bind(had.id, now, fixText).run();
     return json({ ok: true, confirmed: true });
   }
   await env.DB.prepare(
-    `INSERT INTO runs (run_key, level_id, level_hash, level_name, tps, steps, inputs, version, created, last_confirm, confirms)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, 1)`
-  ).bind(key, level, hash, name, tps, last, text, version, now).run();
+    `INSERT INTO runs (run_key, level_id, level_hash, level_name, tps, steps, inputs, version, created, last_confirm, confirms, fixes)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, 1, ?10)`
+  ).bind(key, level, hash, name, tps, last, text, version, now, fixText).run();
   if (player) {
     try {
       await env.DB.prepare(`INSERT OR IGNORE INTO run_owners (run_key, player_id) VALUES (?1, ?2)`).bind(key, player).run();
@@ -364,6 +379,7 @@ async function ensureResults(env) {
   if (resultsReady) return;
   try { await env.DB.prepare(`ALTER TABLE runs ADD COLUMN fails INTEGER NOT NULL DEFAULT 0`).run(); } catch {}
   try { await env.DB.prepare(`ALTER TABLE runs ADD COLUMN replays INTEGER NOT NULL DEFAULT 0`).run(); } catch {}
+  try { await env.DB.prepare(`ALTER TABLE runs ADD COLUMN fixes TEXT`).run(); } catch {}
   try {
     await env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS run_results (run_key TEXT NOT NULL, player_id TEXT NOT NULL, ok INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (run_key, player_id))`
@@ -386,9 +402,9 @@ async function runGet(url, env) {
     .slice(0, 20);
   const holes = skip.map((_, i) => `?${i + 4}`).join(",");
   const r = await env.DB.prepare(
-    `SELECT run_key, level_id, level_hash, tps, steps, inputs, confirms, replays, fails, version FROM runs
+    `SELECT run_key, level_id, level_hash, tps, steps, inputs, confirms, replays, fails, version, fixes FROM runs
      WHERE level_id = ?1 AND level_hash = ?2 AND tps = ?3 ${skip.length ? `AND run_key NOT IN (${holes})` : ""}
-     ORDER BY (replays + confirms - fails) DESC, replays DESC, fails ASC, created ASC LIMIT 1`
+     ORDER BY (replays + confirms - fails) DESC, replays DESC, fails ASC, (fixes IS NOT NULL) DESC, created ASC LIMIT 1`
   ).bind(level, hash, tps, ...skip).first();
   if (!r) {
     // v3.0.2: what the brain has for this level instead (other TPS, other versions), so the game can say why
@@ -403,6 +419,7 @@ async function runGet(url, env) {
   return json({
     found: true, key: r.run_key, level: r.level_id, tps: r.tps, steps: r.steps, confirms: r.confirms,
     replays: r.replays || 0, fails: r.fails || 0, version: r.version, inputs: JSON.parse(r.inputs),
+    fixes: r.fixes ? JSON.parse(r.fixes) : [],
   });
 }
 

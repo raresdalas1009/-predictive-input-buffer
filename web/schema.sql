@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS runs (
   last_confirm INTEGER NOT NULL,
   confirms INTEGER NOT NULL DEFAULT 1,
   replays INTEGER NOT NULL DEFAULT 0,
-  fails INTEGER NOT NULL DEFAULT 0
+  fails INTEGER NOT NULL DEFAULT 0,
+  fixes TEXT
 );
 CREATE INDEX IF NOT EXISTS runs_level ON runs (level_id, level_hash, tps);
 

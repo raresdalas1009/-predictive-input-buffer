@@ -5233,6 +5233,7 @@ namespace online {
         // test 90: the global brain: this attempt's button changes by the game's step (to share a finished
         // run), the level's fingerprint, and whether the macro is a shared run
         std::vector<std::pair<int, bool>> runFlips;
+        std::vector<MacroFix> runFixes;  // v3.1.1: where the player was (every 3 steps and at each click), shared with the run
         std::string levelPrint;
         bool macroIsBrain = false;
         // v3.1.1: the brain run being played (its key on the site), and the ones that failed here
@@ -6168,6 +6169,29 @@ namespace online {
                                 m.lastFrame = std::max(m.lastFrame, f);
                             }
                         }
+                        // v3.1.1: its position records (runs shared from alpha.17 on)
+                        if (v.contains("fixes") && v["fixes"].isArray()) {
+                            for (auto const& a : v["fixes"]) {
+                                if (!a.isArray() || (a.size() != 4 && a.size() != 6)) {
+                                    continue;
+                                }
+                                MacroFix fx;
+                                fx.frame = static_cast<int>(a[0].asInt().unwrapOr(-1));
+                                fx.x = static_cast<float>(a[1].asDouble().unwrapOr(0.0));
+                                fx.y = static_cast<float>(a[2].asDouble().unwrapOr(0.0));
+                                fx.r = static_cast<float>(a[3].asDouble().unwrapOr(0.0));
+                                if (a.size() == 6) {
+                                    fx.p2 = true;
+                                    fx.x2 = fx.x;
+                                    fx.y2 = static_cast<float>(a[4].asDouble().unwrapOr(0.0));
+                                    fx.r2 = static_cast<float>(a[5].asDouble().unwrapOr(0.0));
+                                }
+                                m.fixes.push_back({ fx.frame, fx.x });
+                                m.fixFull.push_back(fx);
+                            }
+                            std::sort(m.fixes.begin(), m.fixes.end());
+                            std::stable_sort(m.fixFull.begin(), m.fixFull.end(), [](MacroFix const& a, MacroFix const& b) { return a.frame < b.frame; });
+                        }
                         if (!m.inputs.empty()) {
                             got = std::move(m);
                         }
@@ -6759,6 +6783,7 @@ namespace online {
     // game starting autoplay there gets the run finished the most times and plays it like a macro.
     // The same run finished again counts as a confirmation. Setting: Global Brain.
     int progressPerStepNow();
+    void brainRecordPos(PlayLayer* layer, int step);
     void brainRecord(PlayLayer* layer, bool down) {
         int per = progressPerStepNow();
         int step = static_cast<int>(layer->m_gameState.m_currentProgress) / std::max(1, per);
@@ -6766,6 +6791,32 @@ namespace online {
             return;
         }
         autoplay.runFlips.push_back({ step, down });
+        brainRecordPos(layer, step);
+    }
+
+    // v3.1.1: where you are at this step, for the run's position records (bots keep these so a run
+    // stays on its path in another game; brain runs had only clicks and drifted off: Thinking Space 12%)
+    void brainRecordPos(PlayLayer* layer, int step) {
+        auto* p1 = layer->m_player1;
+        if (!p1 || autoplay.runFixes.size() >= 40000) {
+            return;
+        }
+        if (!autoplay.runFixes.empty() && autoplay.runFixes.back().frame == step) {
+            return;
+        }
+        MacroFix f;
+        f.frame = step;
+        f.x = p1->getPositionX();
+        f.y = p1->getPositionY();
+        f.r = p1->getRotation();
+        auto* p2 = layer->m_player2;
+        if (layer->m_gameState.m_isDualMode && p2 && !p2->m_isDead) {
+            f.p2 = true;
+            f.x2 = p2->getPositionX();
+            f.y2 = p2->getPositionY();
+            f.r2 = p2->getRotation();
+        }
+        autoplay.runFixes.push_back(f);
     }
 
     std::string levelFingerprint(GJGameLevel* level) {
@@ -6812,8 +6863,15 @@ namespace online {
             inputs += fmt::format("{}[{},{}]", inputs.empty() ? "" : ",", t, d ? 1 : 0);
         }
         auto name = matjson::Value(std::string(layer->m_level->m_levelName)).dump();
-        std::string body = fmt::format(R"({{"id":"{}","level":{},"hash":"{}","tps":{},"name":{},"version":"{}","inputs":[{}]}})", online::id(), layer->m_level->m_levelID.value(),
-            levelFingerprint(layer->m_level), static_cast<int>(settingTps()), name, Mod::get()->getVersion().toVString(), inputs);
+        std::string fixes;
+        fixes.reserve(autoplay.runFixes.size() * 32);
+        for (auto const& f : autoplay.runFixes) {
+            fixes += fixes.empty() ? "" : ",";
+            fixes += f.p2 ? fmt::format("[{},{:.2f},{:.2f},{:.1f},{:.2f},{:.1f}]", f.frame, f.x, f.y, f.r, f.y2, f.r2)
+                          : fmt::format("[{},{:.2f},{:.2f},{:.1f}]", f.frame, f.x, f.y, f.r);
+        }
+        std::string body = fmt::format(R"({{"id":"{}","level":{},"hash":"{}","tps":{},"name":{},"version":"{}","inputs":[{}],"fixes":[{}]}})", online::id(), layer->m_level->m_levelID.value(),
+            levelFingerprint(layer->m_level), static_cast<int>(settingTps()), name, Mod::get()->getVersion().toVString(), inputs, fixes);
         size_t n = autoplay.runFlips.size();
         std::thread([body, n] {
             auto res = web::WebRequest().timeout(std::chrono::seconds(20)).userAgent("ClickBeforeFrames").header("Content-Type", "application/json")
@@ -6880,6 +6938,7 @@ namespace online {
         autoplay.macroArmed = !autoplay.macro.empty();
         ++autoplay.attemptNo;
         autoplay.runFlips.clear();  // test 90
+        autoplay.runFixes.clear();
         macroOffsetSetting = static_cast<int>(Mod::get()->getSettingValue<int64_t>("macro-offset"));  // test 93
         macroFixesSetting = Mod::get()->getSettingValue<bool>("macro-fixes");
         autoplay.userTouched = false;
@@ -9346,6 +9405,35 @@ namespace online {
         float px = p1->getPositionX();
         MacroFix const* best = nullptr;
         bool dualNow = layer->m_gameState.m_isDualMode && layer->m_player2 && !layer->m_player2->m_isDead;
+        // v3.1.1: a brain run's records (every 3 steps and at each click, same TPS): the bot's height
+        // between the two records around your x, near this step
+        if (autoplay.macroIsBrain) {
+            auto it = std::lower_bound(fx.begin(), fx.end(), now - 8, [](MacroFix const& f, int v) { return f.frame < v; });
+            for (; it != fx.end() && std::next(it) != fx.end() && it->frame <= now + 8; ++it) {
+                auto const& a = *it;
+                auto const& b = *std::next(it);
+                if (a.x <= px && px <= b.x && b.x - a.x < 12.f && b.frame - a.frame <= 4) {
+                    float t = b.x > a.x ? (px - a.x) / (b.x - a.x) : 0.f;
+                    auto put = [&](PlayerObject* p, float ya, float yb, float ra, float rb) {
+                        float y = ya + (yb - ya) * t;
+                        float dy = y - p->getPositionY();
+                        if (std::abs(dy) < 0.01f || std::abs(dy) > 20.f) {
+                            return;
+                        }
+                        p->setPositionY(y);
+                        p->setRotation(ra + std::remainder(rb - ra, 360.f) * t);
+                        ++autoplay.macroFixCount;
+                        autoplay.macroFixMax = std::max(autoplay.macroFixMax, std::abs(dy));
+                    };
+                    put(p1, a.y, b.y, a.r, b.r);
+                    if (dualNow && a.p2 && b.p2) {
+                        put(layer->m_player2, a.y2, b.y2, a.r2, b.r2);
+                    }
+                    break;
+                }
+            }
+            return;
+        }
         if (autoplay.macroForceX) {
             float y, r;
             if (macroRecordAt(px, y, r)) {
@@ -9442,6 +9530,13 @@ namespace online {
             return;
         }
         measureProgress(layer);  // test 74: once a physics step
+        // v3.1.1: the run's position every 3 steps (for the global brain)
+        {
+            int step = static_cast<int>(layer->m_gameState.m_currentProgress) / std::max(1, progressPerStepNow());
+            if (step % 3 == 0) {
+                brainRecordPos(layer, step);
+            }
+        }
         // Take Over: your clicks go first; the bot plans again once you've stopped for a moment
         if (autoplay.takeOver && tickCount < autoplay.userUntil) {
             autoplay.plan.clear();
