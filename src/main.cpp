@@ -5931,6 +5931,10 @@ namespace online {
         // spike is gone in LDM): a macro only works with it set the way the macro was made (Heliopolis:
         // made with it off, played with it on, dead at 7.1% every time, on the bot's exact path)
         autoplay.macroLdmMismatch = false;
+        if (plNow && plNow->m_level) {
+            say("autoplay: Low Detail Mode: the level {} it, yours is {}, the macro's {}", plNow->m_level->m_lowDetailMode ? "has" : "doesn't have",
+                plNow->m_level->m_lowDetailModeToggled ? "on" : "off", m.ldm ? "on" : "off");
+        }
         if (plNow && plNow->m_level && plNow->m_level->m_lowDetailMode) {
             bool mine = plNow->m_level->m_lowDetailModeToggled;
             if (mine != m.ldm) {
@@ -11807,6 +11811,21 @@ class $modify(BufPlayLayer, PlayLayer) {
                 player->getPositionX(), player->getPositionY(), autoplay.killer.empty() ? "no ghost report" : autoplay.killer);
             if (p2Dual) {
                 say("  (that was player 2, in a dual part)");
+            }
+            // alpha.24: what the object is: moved from where the level puts it, which groups, high
+            // detail, hidden (Heliopolis: two bots passed this exact spot; here the spike kills)
+            if (object) {
+                std::string groups;
+                if (object->m_groups) {
+                    for (int g = 0; g < std::min<int>(object->m_groupCount, 10); ++g) {
+                        if ((*object->m_groups)[g] > 0) {
+                            groups += fmt::format("{}{}", groups.empty() ? "" : ",", (*object->m_groups)[g]);
+                        }
+                    }
+                }
+                say("  the object: placed at x {:.0f} y {:.0f} (now {:.0f},{:.0f}), groups [{}], high detail {}, hidden {}, group off {}, visible {}, opacity {}",
+                    object->m_startPosition.x, object->m_startPosition.y, object->getPositionX(), object->getPositionY(), groups,
+                    object->m_isHighDetail, object->m_isHide, object->m_isGroupDisabled, object->isVisible(), static_cast<int>(object->getOpacity()));
             }
             if (route.active) {
                 say("  route: planned {} ticks past you{}; {} tests so far, {:.2f} ms each", route.end - tickCount,
