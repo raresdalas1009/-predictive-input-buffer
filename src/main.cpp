@@ -9599,26 +9599,32 @@ namespace online {
             }
             return false;
         };
-        auto fix = [&](PlayerObject* p, float y, float r) {
+        // alpha.25: as xdBot plays its macros: you're put on the record's spot, x and y (the x only when
+        // it's close, so a teleport isn't undone), with no check against what's there. Alpha.4 left out
+        // records that touched a spike's box in this game, and those were the ones near spikes: Society
+        // (2, 14 left out) and Heliopolis (34) died there; v3.1.0, with no check, finished Heliopolis
+        auto fix = [&](PlayerObject* p, float x, float y, float r) {
             float dy = y - p->getPositionY();
-            // alpha.8: played by position the record is the bot's own spot at this x (no other TPS's
-            // timing in it): it's trusted, and a bigger drift is still pulled back (Grief's wave drifted
-            // 26 units up past 6 left-out records and died at 1.5%)
-            if (std::abs(dy) < 0.01f || std::abs(dy) > (autoplay.macroForceX ? 60.f : 20.f)) {
+            float dx = x - p->getPositionX();
+            if ((std::abs(dy) < 0.01f && std::abs(dx) < 0.01f) || std::abs(dy) > (autoplay.macroForceX ? 60.f : 20.f)) {
                 return;
             }
-            if (!autoplay.macroForceX && std::abs(dy) > 0.5f && blocked(p, dy)) {
-                ++autoplay.macroFixSkipped;
-                return;
+            if (!autoplay.macroForceX && std::abs(dx) <= 2.5f) {
+                p->setPosition({ x, y });
             }
-            p->setPositionY(y);
+            else {
+                p->setPositionY(y);
+            }
             p->setRotation(r);
             ++autoplay.macroFixCount;
             autoplay.macroFixMax = std::max(autoplay.macroFixMax, std::abs(dy));
         };
-        fix(p1, best->y, best->r);
+        (void)blocked;
+        float shiftX = std::abs(best->x - p1->getPositionX()) <= 2.5f ? best->x - p1->getPositionX() : 0.f;
+        fix(p1, best->x, best->y, best->r);
         if (best->p2 && layer->m_gameState.m_isDualMode && layer->m_player2 && !layer->m_player2->m_isDead) {
-            fix(layer->m_player2, best->y2, best->r2);
+            auto* p2 = layer->m_player2;
+            fix(p2, p2->getPositionX() + shiftX, best->y2, best->r2);
         }
     }
 
