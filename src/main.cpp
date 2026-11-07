@@ -9545,9 +9545,17 @@ namespace online {
         }
         // v3.1.1: never into a block or a spike (a 6-unit fix pushed Penumbral's wave into the ceiling:
         // a death with no object). The player's box at the new height is checked against what's there.
+        // alpha.21: only a fix that puts you deep inside a block (4 units) or into a spike's hitbox is left
+        // out. Alpha.4 counted touching too, so a cube on the ground or riding a block lost its fixes
+        // (Heliopolis: 93 left out an attempt, dead at 7.1%; v3.1.0, with no check, finished it)
         auto blocked = [&](PlayerObject* p, float dy) {
-            auto r = p->getObjectRect();
-            r.origin.y += dy;
+            auto full = p->getObjectRect();
+            full.origin.y += dy;
+            auto r = full;
+            r.origin.x += 4.f;
+            r.origin.y += 4.f;
+            r.size.width = std::max(1.f, r.size.width - 8.f);
+            r.size.height = std::max(1.f, r.size.height - 8.f);
             int b = static_cast<int>(std::floor(p->getPositionX() / 64.f));
             for (int k = b - 1; k <= b + 1; ++k) {
                 auto it = buf.objIndex.find(k);
@@ -9556,8 +9564,13 @@ namespace online {
                 }
                 for (auto* o : it->second) {
                     auto t = o->m_objectType;
-                    if ((t == GameObjectType::Solid || t == GameObjectType::Hazard || t == GameObjectType::AnimatedHazard) && !o->m_isDisabled &&
-                        !o->m_isDisabled2 && o->getObjectRect().intersectsRect(r)) {
+                    if (o->m_isDisabled || o->m_isDisabled2) {
+                        continue;
+                    }
+                    if (t == GameObjectType::Solid && o->getObjectRect().intersectsRect(r)) {
+                        return true;
+                    }
+                    if ((t == GameObjectType::Hazard || t == GameObjectType::AnimatedHazard) && o->getObjectRect().intersectsRect(full)) {
                         return true;
                     }
                 }
