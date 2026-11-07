@@ -5818,8 +5818,26 @@ namespace online {
         if (twoPlayer) {
             autoplay.macroTrials.resize(6);  // +1, +1 swapped, 0, 0 swapped, -1, -1 swapped
         }
+        if (autoplay.macroForceX) {
+            // alpha.7: played by position no shift matters, only which player is which. The player
+            // with the most clicks goes first (Grief: the file's "player 2" has 1359, "player 1" 18,
+            // the wave at the start is the visible player's)
+            bool guess = twoPlayer && m.inputs.size() * 4 < m.inputs2.size();
+            autoplay.macroTrials.clear();
+            if (twoPlayer) {
+                autoplay.macroTrials = { { 0, guess }, { 0, !guess } };
+            }
+            else {
+                autoplay.macroTuned = true;
+                autoplay.macroTrials = { { 0, false } };
+            }
+        }
         autoplay.macroTrialReach.assign(autoplay.macroTrials.size(), -1);
         autoplay.macroAutoOffset = autoplay.macroTrials[0].first;
+        if (autoplay.macroTrials[0].second) {
+            macroSetSwap(true);
+            say("autoplay: the file's player 2 has most of the clicks ({} to {}): it's played as player 1 first", m.inputs2.size(), m.inputs.size());
+        }
         autoplay.macroIdx2 = 0;
         autoplay.held2 = false;
         autoplay.known.clear();
@@ -6876,7 +6894,7 @@ namespace online {
                 autoplay.macroFixSkipped = 0;
             }
             // test 79: first find the step the macro lines up on: each shift gets an attempt
-            if (!autoplay.macroTuned && !autoplay.macroByX && reached < autoplay.macroEnd && !autoplay.macroTrials.empty()) {
+            if (!autoplay.macroTuned && (!autoplay.macroByX || autoplay.macroForceX) && reached < autoplay.macroEnd && !autoplay.macroTrials.empty()) {
                 int raw = reached - autoplay.macroAutoOffset;
                 int n = static_cast<int>(autoplay.macroTrials.size());
                 autoplay.macroTrialReach[autoplay.macroTry] = raw;
