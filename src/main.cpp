@@ -371,6 +371,11 @@ namespace {
         return std::clamp(TICK / dt, 0.25f, 8.f);
     }
 
+    // alpha.18: the TPS a macro was made at, used while autoplay plays it (0: the setting). A macro
+    // played at its own TPS is played by time like on the bot that made it (Grief at 360: past 36%,
+    // where played by position at 240 it died)
+    int tpsOverride = 0;
+
     int st(int ticks240) {
         if (ticks240 <= 0) {
             return ticks240;
@@ -5689,11 +5694,6 @@ namespace online {
 
     void cbfOffForMacro();
     // test 87: your Physics TPS setting (240 = the normal game)
-    // alpha.18: the TPS a macro was made at, used while autoplay plays it (0: the setting). A macro
-    // played at its own TPS is played by time like on the bot that made it (Grief at 360: past 36%,
-    // where played by position at 240 it died)
-    int tpsOverride = 0;
-
     double settingTps() {
         if (tpsOverride > 0) {
             return tpsOverride;
