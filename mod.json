@@ -6,7 +6,7 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"version": "v3.1.1-alpha.17",
+	"version": "v3.1.1-alpha.18",
 	"id": "basu.input-buffer",
 	"name": "Click Before Frames",
 	"developer": "BASU",
@@ -393,6 +393,12 @@
 			"description": "When a macro has the bot's position records (xdBot macros do), autoplay keeps you on the macro's path: a small difference in height or angle is set back to the recorded one each step, as xdBot does when it plays its macros. Off: the macro's inputs only.",
 			"default": true
 		},
+		"macro-auto-tps": {
+			"type": "bool",
+			"name": "Macro Plays At Its TPS",
+			"description": "A macro made at another TPS (like 360) is played at that TPS while autoplay plays it, exactly like on the bot that made it. Off: it's played by position at your TPS instead (less exact).",
+			"default": true
+		},
 		"macro-offset": {
 			"type": "int",
 			"name": "Macro Timing Offset (steps)",
@@ -412,7 +418,10 @@
 			"name": "Autoplay Label",
 			"description": "The AUTOPLAY label is always on screen while autoplay plays, so a recording can't pass as a real run. Big: at the top. Small: a small see-through label in the bottom corner, for showcases.",
 			"default": "Big",
-			"one-of": ["Big", "Small"]
+			"one-of": [
+				"Big",
+				"Small"
+			]
 		},
 		"global-brain": {
 			"type": "bool",

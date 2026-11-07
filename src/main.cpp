@@ -5610,6 +5610,7 @@ namespace online {
     // the brain is asked, and only without a run there does autoplay look in your Macros Folder, then
     // on Hyperbolus
     void loadMacro(PlayLayer* layer) {
+        tpsOverride = 0;
         autoplay.fromMacro.clear();
         autoplay.macroIsBrain = false;
         autoplay.macroUrl.clear();
@@ -5688,13 +5689,24 @@ namespace online {
 
     void cbfOffForMacro();
     // test 87: your Physics TPS setting (240 = the normal game)
+    // alpha.18: the TPS a macro was made at, used while autoplay plays it (0: the setting). A macro
+    // played at its own TPS is played by time like on the bot that made it (Grief at 360: past 36%,
+    // where played by position at 240 it died)
+    int tpsOverride = 0;
+
     double settingTps() {
+        if (tpsOverride > 0) {
+            return tpsOverride;
+        }
         return static_cast<double>(std::max<int64_t>(240, Mod::get()->getSettingValue<int64_t>("tps")));
     }
 
     // v3.1.1: the steps a second the game really runs (the TPS setting doesn't change it on 2.2081:
     // Grief's 360 TPS macro was played at 240 by time and died at once)
     double physicsTps() {
+        if (tpsOverride > 0) {
+            return tpsOverride;
+        }
         return std::round(st(240) / 10.0) * 10.0;
     }
 
@@ -5714,6 +5726,15 @@ namespace online {
     bool applyMacro(Macro const& m, std::string const& credit) {
         // test 71: like Nova, only a macro made at your TPS by time; v3.1.1: one made at another TPS with
         // the bot's position records is played by x instead (each input where the bot pressed it)
+        // alpha.18: made at another TPS (240 to 1000): autoplay plays at that TPS while it plays the macro
+        tpsOverride = 0;
+        bool autoTps = Mod::get()->getSettingValue<bool>("macro-auto-tps") && m.fps >= 239.5 && m.fps <= 1000.5;
+        double baseTps = static_cast<double>(std::max<int64_t>(240, Mod::get()->getSettingValue<int64_t>("tps")));
+        if (autoTps && std::abs(m.fps - baseTps) > 0.5) {
+            tpsOverride = static_cast<int>(std::lround(m.fps));
+            autoplay.needRestart = true;  // the attempt starts again at that TPS
+            say("autoplay: the macro was made at {} TPS: autoplay plays at {} TPS while it plays it (setting: Macro Plays At Its TPS)", tpsOverride, tpsOverride);
+        }
         bool otherTps = std::abs(m.fps - physicsTps()) > 0.5;
         if (otherTps && m.fixes.size() < 100) {
             say("autoplay: the macro {} was made at {:.0f} TPS, the game runs {:.0f}, and it has no position records to play it by: it can't be used",
@@ -5873,7 +5894,9 @@ namespace online {
         if (plNow && plNow->m_level) {
             auto saved = Mod::get()->getSavedValue<std::string>(fmt::format("macro-shift-{}", plNow->m_level->m_levelID.value()), "");
             auto bar = saved.find('|');
-            if (bar != std::string::npos && saved.substr(bar + 1) == autoplay.fromMacro) {
+            // alpha.18: found for the same way of playing it ('t': by time; none: by position)
+            bool sameMode = bar != std::string::npos && (saved.substr(0, bar).find('t') != std::string::npos) == !autoplay.macroForceX;
+            if (bar != std::string::npos && sameMode && saved.substr(bar + 1) == autoplay.fromMacro) {
                 auto head = saved.substr(0, bar);
                 autoplay.macroAutoOffset = std::atoi(head.c_str());
                 autoplay.macroTuned = true;
@@ -5944,9 +5967,11 @@ namespace online {
         onlineMacroTried.insert(levelId);
         say("autoplay: looking for a macro of this level on Hyperbolus...");
         std::filesystem::path dir = macroDir();
-        double tps = physicsTps();  // v3.1.1: what the game really runs (the setting doesn't change it on 2.2081)
+        // alpha.18: your TPS (the setting); a macro at another one is played at its own (Macro Plays At Its TPS)
+        double tps = static_cast<double>(std::max<int64_t>(240, Mod::get()->getSettingValue<int64_t>("tps")));
+        bool autoTps = Mod::get()->getSettingValue<bool>("macro-auto-tps");
         std::string bad = "|" + Mod::get()->getSavedValue<std::string>(fmt::format("macro-bad2-{}", levelId), "") + "|";  // alpha.6: a new list (macros dropped before for another TPS are tried again)
-        std::thread([levelId, dir, tps, bad] {
+        std::thread([levelId, dir, tps, bad, autoTps] {
             auto tell = [](std::string msg) { queueInMainThread([msg] { say("{}", msg); }); };
             std::vector<OnlineMacro> list;
             int last = 1;
@@ -6035,7 +6060,8 @@ namespace online {
                 std::vector<uint8_t> data(bytes.begin(), bytes.end());
                 std::string why;
                 auto m = parseMacro(data, o.file, why);
-                if (m && (m->levelId == 0 || m->levelId == levelId) && std::abs(m->fps - tps) > 0.5 && m->fixes.size() < 100) {
+                if (m && (m->levelId == 0 || m->levelId == levelId) && std::abs(m->fps - tps) > 0.5 && m->fixes.size() < 100 &&
+                    !(autoTps && m->fps >= 239.5 && m->fps <= 1000.5)) {
                     ++otherTps[static_cast<int>(std::lround(m->fps))];
                     continue;
                 }
@@ -6394,6 +6420,7 @@ namespace online {
     }
 
     void stopAutoplay(char const* why) {
+        tpsOverride = 0;
         if (cbfOverridden) {
             cbfRestore();
         }
@@ -7053,7 +7080,7 @@ namespace online {
                 // test 81: remembered for this macro, so the next session doesn't try them all again
                 if (layer->m_level) {
                     Mod::get()->setSavedValue(fmt::format("macro-shift-{}", layer->m_level->m_levelID.value()),
-                        fmt::format("{}{}|{}", autoplay.macroAutoOffset, autoplay.macroSwap ? "s" : "", autoplay.fromMacro));
+                        fmt::format("{}{}{}|{}", autoplay.macroAutoOffset, autoplay.macroSwap ? "s" : "", autoplay.macroForceX ? "" : "t", autoplay.fromMacro));
                 }
                 autoplay.macroDeaths.clear();
                 autoplay.macroDeaths.push_back(autoplay.macroTrialReach[best] + autoplay.macroAutoOffset);
@@ -12817,16 +12844,17 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
 
     void update(float dt) {
         // test 93: the setting is read twice a second, not every frame
-        static int tps = 240;
+        static int tpsSetting = 240;
         static int tpsAge = 1000;
         if (++tpsAge > 30) {
             tpsAge = 0;
-            tps = static_cast<int>(Mod::get()->getSettingValue<int64_t>("tps"));
+            tpsSetting = static_cast<int>(Mod::get()->getSettingValue<int64_t>("tps"));
         }
         // v3.0 test 14: while autoplay plays, physics steps are exactly 1/240 s even at the normal
         // 240 TPS. The game's own steps are frame time / step count, so the same inputs moved
         // you a little differently each attempt (replays went differently, the ghost guessed wrong)
         bool fixedStep = autoplay.active && static_cast<GJBaseGameLayer*>(autoplay.layer) == static_cast<GJBaseGameLayer*>(this);
+        int tps = (fixedStep && tpsOverride > 0) ? tpsOverride : tpsSetting;
         if ((tps <= 240 && !fixedStep) || tpsDriving || !typeinfo_cast<PlayLayer*>(this)) {
             GJBaseGameLayer::update(dt);
             return;
