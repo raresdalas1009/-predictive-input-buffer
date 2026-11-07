@@ -141,7 +141,7 @@ async function statsFresh(env) {
       runsShared: runsN?.n || 0,
       runsConfirmed: runsN?.c || 0,
       recentBeaten: (recent.results || []).map((r) => ({ id: r.level_id, name: r.name || `Level ${r.level_id}`, at: r.at, confirms: r.c })),
-      discordInvite: env.DISCORD_INVITE || "",
+      discordInvite: env.DISCORD_INVITE || "https://discord.gg/hSMYGcfcR",
       at: now,
     },
     200,

@@ -23,7 +23,7 @@ id = "PUT-YOUR-KV-ID-HERE"
 [vars]
 # your Discord application's client id (not secret), and your server invite (optional)
 DISCORD_CLIENT_ID = "PUT-YOUR-CLIENT-ID-HERE"
-DISCORD_INVITE = ""
+DISCORD_INVITE = "https://discord.gg/hSMYGcfcR"
 # your Discord user id: only you can upload versions on /admin
 ADMIN_DISCORD_ID = ""
 # secrets (never here): npx wrangler secret put DISCORD_CLIENT_SECRET / SESSION_SECRET
