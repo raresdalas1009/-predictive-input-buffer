@@ -5214,7 +5214,8 @@ namespace online {
         std::vector<float> macroX;  // test 71: where each input is (from the macro's position records), for start positions
         int attemptNo = 0;
         int macroSyncedFor = -1;
-        bool macroMidStart = false;  // alpha.9: this attempt's macro began partway in (it was downloaded mid-attempt)
+        bool macroMidStart = false;
+        float macroLastPx = -1.f;  // alpha.10: x a step ago (how far a step goes)  // alpha.9: this attempt's macro began partway in (it was downloaded mid-attempt)
         bool macroByX = false;
         bool macroForceX = false;  // v3.1.1: made at another TPS: played by x from its position records
         std::vector<float> macroXA, macroXB, macroX2;  // each list's x (A/B as in the file; X2: player 2's)
@@ -6955,7 +6956,7 @@ namespace online {
                 }
                 // (one downloaded by tests 69-76 has no record of where it's from: it's downloaded again)
                 bool oldDownload = src.empty() && lid > 0 && autoplay.fromMacro.rfind(std::to_string(lid) + ".", 0) == 0;
-                if (here >= 2 && reached < autoplay.macroEnd / 20 && (fromSite || oldDownload)) {
+                if (here >= 2 && reached < autoplay.macroEnd / 20 && (fromSite || oldDownload) && !autoplay.macroForceX) {
                     if (fromSite) {
                         auto key = fmt::format("macro-bad2-{}", lid);
                         auto badList = Mod::get()->getSavedValue<std::string>(key, "");
@@ -9013,6 +9014,7 @@ namespace online {
     }
 
     void macroApplyFix(PlayLayer* layer, PlayerObject* p1, int now);
+    bool macroRecordAt(float x, float& y, float& r);
     // test 84: player 2's button in a 2-player level
     void macroPress2(PlayLayer* layer, bool down) {
         if (autoplay.held2 == down) {
@@ -9052,6 +9054,8 @@ namespace online {
         if (autoplay.macroSyncedFor != autoplay.attemptNo) {
             autoplay.macroSyncedFor = autoplay.attemptNo;
             autoplay.macroMidStart = !layer->m_startPosObject && px > 60.f;
+            autoplay.macroLastPx = -1.f;
+            autoplay.fixPtr = 0;
             size_t idx = 0;
             while (idx < autoplay.macro.size() && (autoplay.macroByX ? autoplay.macroX[idx] <= px : autoplay.macro[idx].first < now)) {
                 ++idx;
@@ -9078,11 +9082,28 @@ namespace online {
         if (!autoplay.macroByX && autoplay.macroInGap) {
             return;  // leaving a gap is handled once a step in macroPlaying
         }
+        // alpha.10: played by position an input goes in on the step nearest its x (not the first step
+        // past it), and you're put exactly where the bot was when it pressed: Grief's mini wave let go
+        // up to a step late and peaked 2.6 units higher than the bot, into a spike (1.7%)
+        float dx = autoplay.macroLastPx >= 0.f ? px - autoplay.macroLastPx : 0.f;
+        autoplay.macroLastPx = px;
+        if (dx < 0.f || dx > 8.f) {
+            dx = 0.f;
+        }
+        float ahead = autoplay.macroForceX ? dx * 0.5f : 0.f;
         while (autoplay.macroIdx < autoplay.macro.size() &&
-               (autoplay.macroByX ? autoplay.macroX[autoplay.macroIdx] <= px : autoplay.macro[autoplay.macroIdx].first <= now)) {
+               (autoplay.macroByX ? autoplay.macroX[autoplay.macroIdx] <= px + ahead : autoplay.macro[autoplay.macroIdx].first <= now)) {
             if (!autoplay.macroLogged) {
                 autoplay.macroLogged = true;
                 say("macro: an input for step {} went in at step {} (x {:.1f})", autoplay.macro[autoplay.macroIdx].first, now, px);
+            }
+            if (autoplay.macroForceX && macroFixesSetting && dx > 0.f && !(layer->m_gameState.m_isDualMode && layer->m_player2)) {
+                float mx = autoplay.macroX[autoplay.macroIdx], y, r;
+                if (std::abs(mx - px) <= dx && macroRecordAt(mx, y, r) && std::abs(y - p1->getPositionY()) <= 20.f) {
+                    p1->setPosition({ mx, y });
+                    p1->setRotation(r);
+                    px = mx;
+                }
             }
             macroPress(layer, autoplay.macro[autoplay.macroIdx].second);
             ++autoplay.macroIdx;
@@ -9090,7 +9111,7 @@ namespace online {
         if (autoplay.macroTwoPlayer) {
             bool byX = autoplay.macroByX && autoplay.macroX2.size() == autoplay.macroP2.size();
             while (autoplay.macroIdx2 < autoplay.macroP2.size() &&
-                   (byX ? autoplay.macroX2[autoplay.macroIdx2] <= px : autoplay.macroP2[autoplay.macroIdx2].first <= now)) {
+                   (byX ? autoplay.macroX2[autoplay.macroIdx2] <= px + ahead : autoplay.macroP2[autoplay.macroIdx2].first <= now)) {
                 macroPress2(layer, autoplay.macroP2[autoplay.macroIdx2].second);
                 ++autoplay.macroIdx2;
             }
@@ -9101,6 +9122,43 @@ namespace online {
     // test 89 (as xdBot plays its macros): the bot's position record nearest where you are (by x, the
     // part that doesn't drift) puts you back on the macro's height and angle when you're slightly off,
     // so small physics differences don't add up into a death
+    // alpha.10: the bot's height and angle at exactly this x, between its two records around it
+    // (the nearest record alone was up to half a record off; with a 360 TPS macro at 240 that's enough
+    // for Grief's mini wave to graze a spike)
+    bool macroRecordAt(float x, float& y, float& r) {
+        auto& fx = autoplay.macroFixes;
+        if (fx.size() < 2) {
+            return false;
+        }
+        if (autoplay.fixPtr >= fx.size() || fx[autoplay.fixPtr].x > x + 50.f) {
+            autoplay.fixPtr = 0;
+        }
+        while (autoplay.fixPtr + 1 < fx.size() && fx[autoplay.fixPtr + 1].x <= x) {
+            ++autoplay.fixPtr;
+        }
+        auto const& a = fx[autoplay.fixPtr];
+        if (autoplay.fixPtr + 1 >= fx.size()) {
+            y = a.y;
+            r = a.r;
+            return std::abs(a.x - x) <= 2.5f;
+        }
+        auto const& b = fx[autoplay.fixPtr + 1];
+        float span = b.x - a.x;
+        if (x < a.x - 2.5f || span <= 0.f || span > 5.f) {
+            if (std::abs(a.x - x) > 2.5f) {
+                return false;
+            }
+            y = a.y;
+            r = a.r;
+            return true;
+        }
+        float t = std::clamp((x - a.x) / span, 0.f, 1.f);
+        y = a.y + (b.y - a.y) * t;
+        float dr = std::remainder(b.r - a.r, 360.f);
+        r = a.r + dr * t;
+        return true;
+    }
+
     void macroApplyFix(PlayLayer* layer, PlayerObject* p1, int now) {
         if (autoplay.macroFixes.empty() || !macroFixesSetting) {
             return;
@@ -9108,6 +9166,19 @@ namespace online {
         auto& fx = autoplay.macroFixes;
         float px = p1->getPositionX();
         MacroFix const* best = nullptr;
+        if (autoplay.macroForceX && !(layer->m_gameState.m_isDualMode && layer->m_player2)) {
+            float y, r;
+            if (macroRecordAt(px, y, r)) {
+                float dy = y - p1->getPositionY();
+                if (std::abs(dy) >= 0.01f && std::abs(dy) <= 60.f) {
+                    p1->setPositionY(y);
+                    p1->setRotation(r);
+                    ++autoplay.macroFixCount;
+                    autoplay.macroFixMax = std::max(autoplay.macroFixMax, std::abs(dy));
+                }
+            }
+            return;
+        }
         if (autoplay.macroForceX) {
             // v3.1.1: by x (its frames are another TPS's): a pointer that moves along with you
             if (autoplay.fixPtr >= fx.size() || fx[autoplay.fixPtr].x > px + 50.f) {
