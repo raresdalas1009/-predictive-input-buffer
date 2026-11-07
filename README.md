@@ -98,3 +98,4 @@ Practice use only; do not use for verified or leaderboard runs.
 - v2.99.5: iOS without JIT works: 8 ghost-visual hooks that crashed the no-JIT launcher on the loading screen are left out on iOS (no effect on buffering; other platforms unchanged).
 - v3.0.0: autoplay (route planner, pathfinder, macros from your folder or Hyperbolus, the global brain, 2-player levels), a new animated window with an Account tab linked to Discord, an online counter, updates from the Click Before Frames site, and lighter FPS.
 - v3.0.1: the autoplay trail is hidden by default (setting: Show Autoplay Trail), and the AUTOPLAY label can be small and see-through in the bottom corner for showcases (setting: Autoplay Label).
+- v3.1.0: the global brain's run comes first (over any macro you have; then your Macros folder, then Hyperbolus), the log says why there's no run for you (another TPS or another version of the level), and a Forget Macro button in the autoplay panel.
