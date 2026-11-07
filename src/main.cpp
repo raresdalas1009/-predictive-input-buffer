@@ -5224,6 +5224,7 @@ namespace online {
         std::vector<std::pair<int, bool>> runFlips;
         std::string levelPrint;
         bool macroIsBrain = false;
+        std::string macroUrl;  // v3.1.1: the Hyperbolus download the macro came from (empty: yours / the brain)
         std::vector<MacroFix> macroFixes;  // test 89: frames converted to steps
         int macroFixCount = 0;
         float macroFixMax = 0.f;
@@ -5593,6 +5594,7 @@ namespace online {
     void loadMacro(PlayLayer* layer) {
         autoplay.fromMacro.clear();
         autoplay.macroIsBrain = false;
+        autoplay.macroUrl.clear();
         autoplay.macro.clear();
         autoplay.macroUntil = autoplay.macroEnd = 0;
         autoplay.macroLogged = false;
@@ -5650,10 +5652,14 @@ namespace online {
         // test 77: one downloaded from Hyperbolus keeps its credit
         std::string credit;
         auto src = Mod::get()->getSavedValue<std::string>(fmt::format("macro-src-{}", id), "");
+        std::string url;
         if (auto nl = src.find('\n'); nl != std::string::npos && found->file.rfind(std::to_string(id) + ".", 0) == 0) {
             credit = src.substr(nl + 1);
+            url = src.substr(0, nl);
         }
-        applyMacro(*found, credit);
+        if (applyMacro(*found, credit)) {
+            autoplay.macroUrl = url;
+        }
     }
 
     void cbfOffForMacro();
@@ -6011,7 +6017,9 @@ namespace online {
                     if (!autoplay.active || !layer || !layer->m_level || layer->m_level->m_levelID.value() != levelId) {
                         return;
                     }
-                    applyMacro(got, credit);
+                    if (applyMacro(got, credit)) {
+                        autoplay.macroUrl = url;
+                    }
                 });
                 return;
             }
@@ -6881,7 +6889,11 @@ namespace online {
                 int lid = lvl ? lvl->m_levelID.value() : 0;
                 auto src = lid > 0 ? Mod::get()->getSavedValue<std::string>(fmt::format("macro-src-{}", lid), "") : std::string();
                 auto nl = src.find('\n');
-                bool fromSite = nl != std::string::npos && autoplay.fromMacro == src.substr(nl + 1);
+                bool fromSite = !autoplay.macroUrl.empty() || (nl != std::string::npos && autoplay.fromMacro == src.substr(nl + 1));
+                if (!autoplay.macroUrl.empty()) {
+                    src = autoplay.macroUrl + "\n" + autoplay.fromMacro;  // v3.1.1: known even after its file is gone
+                    nl = src.find('\n');
+                }
                 // (one downloaded by tests 69-76 has no record of where it's from: it's downloaded again)
                 bool oldDownload = src.empty() && lid > 0 && autoplay.fromMacro.rfind(std::to_string(lid) + ".", 0) == 0;
                 if (here >= 2 && reached < autoplay.macroEnd / 20 && (fromSite || oldDownload)) {
@@ -10987,8 +10999,14 @@ private:
         Mod::get()->setSavedValue(fmt::format("macro-final-{}", id), false);
         std::filesystem::remove(macroDir() / fmt::format("{}.best.gdr", id), ec);
         std::filesystem::remove(macroDir() / fmt::format("{}.best.gdr.json", id), ec);
-        say("autoplay: {} for this level; restart autoplay to look again (brain, then Hyperbolus)",
+        say("autoplay: {} for this level: looking again (brain, then Hyperbolus)",
             removed ? "the macro is forgotten" : "no macro file named after this level (one with another name stays: delete it in the Macros folder)");
+        // v3.1.1: right away (alpha.2 kept playing the macro it had loaded)
+        if (autoplay.active && autoplay.layer == layer) {
+            onlineMacroTried.erase(id);
+            autoplay.macroDeaths.clear();
+            loadMacro(layer);
+        }
     }
 
     // test 67: where to put a level's GDR macro
