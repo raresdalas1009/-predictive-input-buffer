@@ -5215,7 +5215,9 @@ namespace online {
         int attemptNo = 0;
         int macroSyncedFor = -1;
         bool macroMidStart = false;
-        float macroLastPx = -1.f;  // alpha.10: x a step ago (how far a step goes)  // alpha.9: this attempt's macro began partway in (it was downloaded mid-attempt)
+        float macroLastPx = -1.f;
+        int macroAheadTry = 0;  // alpha.11: which press timing a position-played macro uses (see MACRO_AHEAD)
+        std::vector<int> macroAheadReach;  // alpha.10: x a step ago (how far a step goes)  // alpha.9: this attempt's macro began partway in (it was downloaded mid-attempt)
         bool macroByX = false;
         bool macroForceX = false;  // v3.1.1: made at another TPS: played by x from its position records
         std::vector<float> macroXA, macroXB, macroX2;  // each list's x (A/B as in the file; X2: player 2's)
@@ -5705,6 +5707,8 @@ namespace online {
         auto* plNow = GameManager::get()->m_playLayer;
         double k = otherTps ? 1.0 : physicsTps() / m.fps;
         autoplay.macroForceX = otherTps;
+        autoplay.macroAheadTry = 0;
+        autoplay.macroAheadReach.assign(5, -1);
         if (otherTps) {
             say("autoplay: the macro was made at {:.0f} TPS and the game runs {:.0f}: it's played by position (where the bot pressed), not by time",
                 m.fps, physicsTps());
@@ -6877,6 +6881,10 @@ namespace online {
         }
     }
 
+    // alpha.11: where in a step an input of a position-played macro goes in: the step whose x is
+    // nearest the bot's (0.5 of a step ahead), then slightly later / earlier ones
+    constexpr float MACRO_AHEAD[5] = { 0.5f, 0.25f, 0.75f, 0.f, 1.f };
+
     // test 79; test 83: +1 first (Zodiac, Tidal Wave (iCreate) and Thinking Space II (xdBot) all lined up at +1)
     constexpr int MACRO_OFFSETS[5] = { 1, 0, -1, 2, -2 };
     int macroNow(PlayLayer* layer);
@@ -6977,6 +6985,27 @@ namespace online {
                 // v3.1.1: a downloaded macro still dying at one spot after the guard and autoplay's own planning
                 // there (4 deaths): the next Hyperbolus macro is tried; the best one so far is kept aside
                 // and comes back if no other gets further
+                // alpha.11: a position-played macro dying at one spot again: each press timing gets a try
+                // first (Grief: 4 deaths at 36.1%, 0.3 units off the bot's path), then the best is kept
+                if (autoplay.macroForceX && here >= 2 && autoplay.macroAheadTry < 5) {
+                    auto& rs = autoplay.macroAheadReach;
+                    rs[autoplay.macroAheadTry] = std::max(rs[autoplay.macroAheadTry], reached);
+                    if (autoplay.macroAheadTry < 4) {
+                        ++autoplay.macroAheadTry;
+                        autoplay.macroDeaths.pop_back();
+                        say("autoplay: the macro died at step {} again: its inputs go in {:.2f} of a step ahead now (was {:.2f})", reached,
+                            MACRO_AHEAD[autoplay.macroAheadTry], MACRO_AHEAD[autoplay.macroAheadTry - 1]);
+                        return;
+                    }
+                    int best = 0;
+                    for (int i = 1; i < 5; ++i) {
+                        if (rs[i] > rs[best]) {
+                            best = i;
+                        }
+                    }
+                    autoplay.macroAheadTry = 5 + best;  // done: played with the best from now on
+                    say("autoplay: every press timing tried: {:.2f} of a step ahead went furthest (to step {})", MACRO_AHEAD[best], rs[best]);
+                }
                 bool finalPick = lid > 0 && Mod::get()->getSavedValue<bool>(fmt::format("macro-final-{}", lid), false);
                 if (here >= 4 && fromSite && !finalPick) {
                     macroKeepBest(lid, reached, src);
@@ -9090,7 +9119,7 @@ namespace online {
         if (dx < 0.f || dx > 8.f) {
             dx = 0.f;
         }
-        float ahead = autoplay.macroForceX ? dx * 0.5f : 0.f;
+        float ahead = autoplay.macroForceX ? dx * MACRO_AHEAD[autoplay.macroAheadTry >= 5 ? autoplay.macroAheadTry - 5 : autoplay.macroAheadTry] : 0.f;
         while (autoplay.macroIdx < autoplay.macro.size() &&
                (autoplay.macroByX ? autoplay.macroX[autoplay.macroIdx] <= px + ahead : autoplay.macro[autoplay.macroIdx].first <= now)) {
             if (!autoplay.macroLogged) {
@@ -9112,6 +9141,16 @@ namespace online {
             bool byX = autoplay.macroByX && autoplay.macroX2.size() == autoplay.macroP2.size();
             while (autoplay.macroIdx2 < autoplay.macroP2.size() &&
                    (byX ? autoplay.macroX2[autoplay.macroIdx2] <= px + ahead : autoplay.macroP2[autoplay.macroIdx2].first <= now)) {
+                // alpha.11: as with player 1's list: you're put on the bot's spot as it presses (Grief's
+                // clicks are all in this list)
+                if (byX && autoplay.macroForceX && macroFixesSetting && dx > 0.f && !(layer->m_gameState.m_isDualMode && layer->m_player2)) {
+                    float mx = autoplay.macroX2[autoplay.macroIdx2], y, r;
+                    if (std::abs(mx - px) <= dx && macroRecordAt(mx, y, r) && std::abs(y - p1->getPositionY()) <= 20.f) {
+                        p1->setPosition({ mx, y });
+                        p1->setRotation(r);
+                        px = mx;
+                    }
+                }
                 macroPress2(layer, autoplay.macroP2[autoplay.macroIdx2].second);
                 ++autoplay.macroIdx2;
             }
@@ -9166,7 +9205,8 @@ namespace online {
         auto& fx = autoplay.macroFixes;
         float px = p1->getPositionX();
         MacroFix const* best = nullptr;
-        if (autoplay.macroForceX && !(layer->m_gameState.m_isDualMode && layer->m_player2)) {
+        bool dualNow = layer->m_gameState.m_isDualMode && layer->m_player2 && !layer->m_player2->m_isDead;
+        if (autoplay.macroForceX && !dualNow) {
             float y, r;
             if (macroRecordAt(px, y, r)) {
                 float dy = y - p1->getPositionY();
