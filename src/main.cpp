@@ -9070,7 +9070,8 @@ namespace online {
     }
 
     void macroApplyFix(PlayLayer* layer, PlayerObject* p1, int now);
-    bool macroRecordAt(float x, float& y, float& r);
+    bool macroRecordAt(float x, float& y, float& r, bool second = false);
+    bool macroPlaceAt(PlayLayer* layer, PlayerObject* p1, float x);
     // test 84: player 2's button in a 2-player level
     void macroPress2(PlayLayer* layer, bool down) {
         if (autoplay.held2 == down) {
@@ -9149,14 +9150,12 @@ namespace online {
         }
         float ahead = autoplay.macroForceX ? dx * 0.5f : 0.f;
         // alpha.13: the nudge at a spot it keeps dying at (once an attempt, 25 units before it)
-        if (autoplay.macroForceX && dx > 0.f && !autoplay.macroNudges.empty() && !(layer->m_gameState.m_isDualMode && layer->m_player2)) {
+        if (autoplay.macroForceX && dx > 0.f && !autoplay.macroNudges.empty()) {
             for (auto const& [k, n] : autoplay.macroNudges) {
                 if (n > 0 && n <= 3 && px >= k - 25.f && px < k - 5.f && !autoplay.macroNudged.contains(k)) {
                     autoplay.macroNudged.insert(k);
-                    float nx = px + dx * MACRO_NUDGE[n], y, r;
-                    if (macroRecordAt(nx, y, r) && std::abs(y - p1->getPositionY()) <= 20.f) {
-                        p1->setPosition({ nx, y });
-                        p1->setRotation(r);
+                    float nx = px + dx * MACRO_NUDGE[n];
+                    if (macroPlaceAt(layer, p1, nx)) {
                         px = nx;
                     }
                 }
@@ -9168,11 +9167,9 @@ namespace online {
                 autoplay.macroLogged = true;
                 say("macro: an input for step {} went in at step {} (x {:.1f})", autoplay.macro[autoplay.macroIdx].first, now, px);
             }
-            if (autoplay.macroForceX && macroFixesSetting && dx > 0.f && !(layer->m_gameState.m_isDualMode && layer->m_player2)) {
-                float mx = autoplay.macroX[autoplay.macroIdx], y, r;
-                if (std::abs(mx - px) <= dx && macroRecordAt(mx, y, r) && std::abs(y - p1->getPositionY()) <= 20.f) {
-                    p1->setPosition({ mx, y });
-                    p1->setRotation(r);
+            if (autoplay.macroForceX && macroFixesSetting && dx > 0.f) {
+                float mx = autoplay.macroX[autoplay.macroIdx];
+                if (std::abs(mx - px) <= dx && macroPlaceAt(layer, p1, mx)) {
                     px = mx;
                 }
             }
@@ -9185,11 +9182,9 @@ namespace online {
                    (byX ? autoplay.macroX2[autoplay.macroIdx2] <= px + ahead : autoplay.macroP2[autoplay.macroIdx2].first <= now)) {
                 // alpha.11: as with player 1's list: you're put on the bot's spot as it presses (Grief's
                 // clicks are all in this list)
-                if (byX && autoplay.macroForceX && macroFixesSetting && dx > 0.f && !(layer->m_gameState.m_isDualMode && layer->m_player2)) {
-                    float mx = autoplay.macroX2[autoplay.macroIdx2], y, r;
-                    if (std::abs(mx - px) <= dx && macroRecordAt(mx, y, r) && std::abs(y - p1->getPositionY()) <= 20.f) {
-                        p1->setPosition({ mx, y });
-                        p1->setRotation(r);
+                if (byX && autoplay.macroForceX && macroFixesSetting && dx > 0.f) {
+                    float mx = autoplay.macroX2[autoplay.macroIdx2];
+                    if (std::abs(mx - px) <= dx && macroPlaceAt(layer, p1, mx)) {
                         px = mx;
                     }
                 }
@@ -9206,7 +9201,7 @@ namespace online {
     // alpha.10: the bot's height and angle at exactly this x, between its two records around it
     // (the nearest record alone was up to half a record off; with a 360 TPS macro at 240 that's enough
     // for Grief's mini wave to graze a spike)
-    bool macroRecordAt(float x, float& y, float& r) {
+    bool macroRecordAt(float x, float& y, float& r, bool second) {
         auto& fx = autoplay.macroFixes;
         if (fx.size() < 2) {
             return false;
@@ -9218,25 +9213,55 @@ namespace online {
             ++autoplay.fixPtr;
         }
         auto const& a = fx[autoplay.fixPtr];
+        // alpha.14: player 2's record too (dual parts)
+        auto ya = [&](MacroFix const& f) { return second ? f.y2 : f.y; };
+        auto ra = [&](MacroFix const& f) { return second ? f.r2 : f.r; };
+        if (second && !a.p2) {
+            return false;
+        }
         if (autoplay.fixPtr + 1 >= fx.size()) {
-            y = a.y;
-            r = a.r;
+            y = ya(a);
+            r = ra(a);
             return std::abs(a.x - x) <= 2.5f;
         }
         auto const& b = fx[autoplay.fixPtr + 1];
         float span = b.x - a.x;
-        if (x < a.x - 2.5f || span <= 0.f || span > 5.f) {
+        if (x < a.x - 2.5f || span <= 0.f || span > 5.f || (second && !b.p2)) {
             if (std::abs(a.x - x) > 2.5f) {
                 return false;
             }
-            y = a.y;
-            r = a.r;
+            y = ya(a);
+            r = ra(a);
             return true;
         }
         float t = std::clamp((x - a.x) / span, 0.f, 1.f);
-        y = a.y + (b.y - a.y) * t;
-        float dr = std::remainder(b.r - a.r, 360.f);
-        r = a.r + dr * t;
+        y = ya(a) + (ya(b) - ya(a)) * t;
+        float dr = std::remainder(ra(b) - ra(a), 360.f);
+        r = ra(a) + dr * t;
+        return true;
+    }
+
+    // alpha.14: you (and player 2 in a dual part) put on the bot's spot at this x. Alpha.13 left dual
+    // parts out, and Grief's 36.1% is one: the nudges never happened
+    bool macroPlaceAt(PlayLayer* layer, PlayerObject* p1, float x) {
+        float y, r;
+        if (!macroRecordAt(x, y, r) || std::abs(y - p1->getPositionY()) > 20.f) {
+            return false;
+        }
+        float shift = x - p1->getPositionX();
+        p1->setPosition({ x, y });
+        p1->setRotation(r);
+        auto* p2 = layer->m_player2;
+        if (layer->m_gameState.m_isDualMode && p2 && !p2->m_isDead) {
+            float y2, r2;
+            if (macroRecordAt(x, y2, r2, true) && std::abs(y2 - p2->getPositionY()) <= 20.f) {
+                p2->setPosition({ p2->getPositionX() + shift, y2 });
+                p2->setRotation(r2);
+            }
+            else {
+                p2->setPositionX(p2->getPositionX() + shift);
+            }
+        }
         return true;
     }
 
@@ -9248,7 +9273,7 @@ namespace online {
         float px = p1->getPositionX();
         MacroFix const* best = nullptr;
         bool dualNow = layer->m_gameState.m_isDualMode && layer->m_player2 && !layer->m_player2->m_isDead;
-        if (autoplay.macroForceX && !dualNow) {
+        if (autoplay.macroForceX) {
             float y, r;
             if (macroRecordAt(px, y, r)) {
                 float dy = y - p1->getPositionY();
@@ -9257,6 +9282,15 @@ namespace online {
                     p1->setRotation(r);
                     ++autoplay.macroFixCount;
                     autoplay.macroFixMax = std::max(autoplay.macroFixMax, std::abs(dy));
+                }
+            }
+            // alpha.14: player 2 in a dual part too, at the same x
+            if (dualNow && macroRecordAt(px, y, r, true)) {
+                auto* p2 = layer->m_player2;
+                float dy = y - p2->getPositionY();
+                if (std::abs(dy) >= 0.01f && std::abs(dy) <= 60.f) {
+                    p2->setPositionY(y);
+                    p2->setRotation(r);
                 }
             }
             return;
