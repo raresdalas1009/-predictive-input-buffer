@@ -5227,6 +5227,7 @@ namespace online {
         std::string macroUrl;  // v3.1.1: the Hyperbolus download the macro came from (empty: yours / the brain)
         std::vector<MacroFix> macroFixes;  // test 89: frames converted to steps
         int macroFixCount = 0;
+        int macroFixSkipped = 0;  // v3.1.1: fixes left out (they'd have put you inside something)
         float macroFixMax = 0.f;
         int macroStepNow = 0;  // test 82: the macro's step as the game's step started (processCommands)
         // test 79: which step the macro's frame 0 is (bots differ by a step): tried in turn, the best kept
@@ -6838,9 +6839,11 @@ namespace online {
         if (!autoplay.macro.empty()) {
             int reached = macroNow(layer);
             if (autoplay.macroFixCount > 0) {
-                say("autoplay: position records used {} times this attempt (most {:.2f} units)", autoplay.macroFixCount, autoplay.macroFixMax);
+                say("autoplay: position records used {} times this attempt (most {:.2f} units){}", autoplay.macroFixCount, autoplay.macroFixMax,
+                    autoplay.macroFixSkipped ? fmt::format(", {} left out (they'd have put you inside a block or spike)", autoplay.macroFixSkipped) : "");
                 autoplay.macroFixCount = 0;
                 autoplay.macroFixMax = 0.f;
+                autoplay.macroFixSkipped = 0;
             }
             // test 79: first find the step the macro lines up on: each shift gets an attempt
             if (!autoplay.macroTuned && !autoplay.macroByX && reached < autoplay.macroEnd && !autoplay.macroTrials.empty()) {
@@ -9054,9 +9057,34 @@ namespace online {
         if (!best || std::abs(best->x - px) > 2.5f) {
             return;  // no record here, or you're somewhere else (a teleport): leave it
         }
+        // v3.1.1: never into a block or a spike (a 6-unit fix pushed Penumbral's wave into the ceiling:
+        // a death with no object). The player's box at the new height is checked against what's there.
+        auto blocked = [&](PlayerObject* p, float dy) {
+            auto r = p->getObjectRect();
+            r.origin.y += dy;
+            int b = static_cast<int>(std::floor(p->getPositionX() / 64.f));
+            for (int k = b - 1; k <= b + 1; ++k) {
+                auto it = buf.objIndex.find(k);
+                if (it == buf.objIndex.end()) {
+                    continue;
+                }
+                for (auto* o : it->second) {
+                    auto t = o->m_objectType;
+                    if ((t == GameObjectType::Solid || t == GameObjectType::Hazard || t == GameObjectType::AnimatedHazard) && !o->m_isDisabled &&
+                        !o->m_isDisabled2 && o->getObjectRect().intersectsRect(r)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
         auto fix = [&](PlayerObject* p, float y, float r) {
             float dy = y - p->getPositionY();
             if (std::abs(dy) < 0.01f || std::abs(dy) > 20.f) {
+                return;
+            }
+            if (std::abs(dy) > 0.5f && blocked(p, dy)) {
+                ++autoplay.macroFixSkipped;
                 return;
             }
             p->setPositionY(y);
