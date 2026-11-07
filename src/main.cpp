@@ -5228,7 +5228,12 @@ namespace online {
         std::map<int, int> macroNudges;
         std::set<int> macroNudged;
         bool macroByX = false;
-        bool macroForceX = false;  // v3.1.1: made at another TPS: played by x from its position records
+        bool macroForceX = false;
+        // alpha.26: an xdBot macro is played exactly as xdBot plays it: its frame is the level time x TPS
+        // + 1, its inputs and position records go in after the game's commands, once a frame
+        bool macroXd = false;
+        size_t xdFixIdx = 0;
+        int xdLastFrame = -1;  // v3.1.1: made at another TPS: played by x from its position records
         std::vector<float> macroXA, macroXB, macroX2;  // each list's x (A/B as in the file; X2: player 2's)
         size_t fixPtr = 0;
         bool macroLogged = false;
@@ -5760,6 +5765,13 @@ namespace online {
         auto* plNow = GameManager::get()->m_playLayer;
         double k = otherTps ? 1.0 : physicsTps() / m.fps;
         autoplay.macroForceX = otherTps;
+        {
+            std::string b = m.bot;
+            std::transform(b.begin(), b.end(), b.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            autoplay.macroXd = !otherTps && b.find("xdbot") != std::string::npos && Mod::get()->getSettingValue<bool>("macro-xdbot-mode");
+        }
+        autoplay.xdFixIdx = 0;
+        autoplay.xdLastFrame = -1;
         autoplay.macroAheadTry = 0;
         autoplay.macroAheadReach.assign(5, -1);
         autoplay.macroNudges.clear();
@@ -5882,6 +5894,12 @@ namespace online {
         }
         if (twoPlayer) {
             autoplay.macroTrials.resize(6);  // +1, +1 swapped, 0, 0 swapped, -1, -1 swapped
+        }
+        if (autoplay.macroXd) {
+            // alpha.26: xdBot's own frame count: no shift to find
+            autoplay.macroTuned = true;
+            autoplay.macroTrials = { { 0, false } };
+            say("autoplay: an xdBot macro: it's played exactly the way xdBot plays it (setting: Play xdBot Macros Like xdBot)");
         }
         if (autoplay.macroForceX) {
             // alpha.7: played by position no shift matters, only which player is which. The player
@@ -7253,6 +7271,9 @@ namespace online {
                 }
                 if (here >= 2 && autoplay.macroTwoPlayer) {
                     say("autoplay: the macro died at step {} again (2-player level: autoplay can't plan player 2, it plays the macro again)", reached);
+                }
+                else if (here >= 2 && autoplay.macroXd) {
+                    say("autoplay: the xdBot macro died at step {} again: it's played as it is (no planning mixed in), the next macro is tried after 4 deaths here", reached);
                 }
                 else if (here >= 2) {
                     // test 75 (like Nova): autoplay plans a stretch around it, the macro plays on after it
@@ -9064,6 +9085,9 @@ namespace online {
     }
 
     int macroNow(PlayLayer* layer) {
+        if (autoplay.macroXd) {
+            return static_cast<int>(layer->m_gameState.m_levelTime * physicsTps()) + 1 + macroOffsetSetting;
+        }
         int per = progressPerStep > 0 ? progressPerStep : 2;
         return static_cast<int>(layer->m_gameState.m_currentProgress) / per + macroOffsetSetting + autoplay.macroAutoOffset;
     }
@@ -9123,7 +9147,7 @@ namespace online {
     }
 
     void macroGuard(PlayLayer* layer, PlayerObject* p1) {
-        if (autoplay.macroByX || autoplay.macroTwoPlayer || autoplay.macroDeaths.empty() || !autoplay.macroTuned ||
+        if (autoplay.macroXd || autoplay.macroByX || autoplay.macroTwoPlayer || autoplay.macroDeaths.empty() || !autoplay.macroTuned ||
             autoplay.macroIdx >= autoplay.macro.size()) {
             mguard.searching = false;
             return;
@@ -9296,9 +9320,87 @@ namespace online {
     }
 
     // at the start of each game step, before the players move
+    // alpha.26: after GJBaseGameLayer::processCommands, once a frame, as xdBot does (src/main.cpp,
+    // handlePlaying): every input up to this frame, then every position record up to it (x, y, angle)
+    void macroStepXd(PlayLayer* layer) {
+        if (!autoplay.active || autoplay.layer != layer || autoplay.macro.empty() || layer->m_isPracticeMode || buf.simulating ||
+            !macroUsable(layer) || layer->m_levelEndAnimationStarted) {
+            return;
+        }
+        int frame = macroNow(layer);
+        if (frame == autoplay.xdLastFrame && frame != 0) {
+            return;
+        }
+        autoplay.xdLastFrame = frame;
+        autoplay.macroStepNow = frame;
+        auto* p1 = layer->m_player1;
+        if (!p1) {
+            return;
+        }
+        if (autoplay.macroSyncedFor != autoplay.attemptNo) {
+            autoplay.macroSyncedFor = autoplay.attemptNo;
+            autoplay.macroMidStart = !layer->m_startPosObject && p1->getPositionX() > 60.f;
+            size_t idx = 0;
+            while (idx < autoplay.macro.size() && autoplay.macro[idx].first < frame) {
+                ++idx;
+            }
+            autoplay.macroIdx = idx;
+            autoplay.macroIdx2 = 0;
+            while (autoplay.macroIdx2 < autoplay.macroP2.size() && autoplay.macroP2[autoplay.macroIdx2].first < frame) {
+                ++autoplay.macroIdx2;
+            }
+            autoplay.xdFixIdx = 0;
+            while (autoplay.xdFixIdx < autoplay.macroFixes.size() && autoplay.macroFixes[autoplay.xdFixIdx].frame < frame) {
+                ++autoplay.xdFixIdx;
+            }
+            autoplay.macroLogged = false;
+            say("autoplay: playing the macro {} like xdBot from frame {}", autoplay.fromMacro, frame);
+        }
+        if (p1->m_isDead) {
+            return;
+        }
+        while (autoplay.macroIdx < autoplay.macro.size() && frame >= autoplay.macro[autoplay.macroIdx].first) {
+            macroPress(layer, autoplay.macro[autoplay.macroIdx].second);
+            ++autoplay.macroIdx;
+        }
+        if (autoplay.macroTwoPlayer) {
+            while (autoplay.macroIdx2 < autoplay.macroP2.size() && frame >= autoplay.macroP2[autoplay.macroIdx2].first) {
+                macroPress2(layer, autoplay.macroP2[autoplay.macroIdx2].second);
+                ++autoplay.macroIdx2;
+            }
+        }
+        if (!macroFixesSetting) {
+            return;
+        }
+        auto& fx = autoplay.macroFixes;
+        auto* p2 = layer->m_player2;
+        while (autoplay.xdFixIdx < fx.size() && frame >= fx[autoplay.xdFixIdx].frame) {
+            auto const& f = fx[autoplay.xdFixIdx];
+            if (f.x != 0.f && f.y != 0.f) {
+                p1->setPosition({ f.x, f.y });
+                ++autoplay.macroFixCount;
+            }
+            if (f.r != 0.f) {
+                p1->setRotation(f.r);
+            }
+            if (layer->m_gameState.m_isDualMode && p2 && f.p2) {
+                if (f.x2 != 0.f && f.y2 != 0.f) {
+                    p2->setPosition({ f.x2, f.y2 });
+                }
+                if (f.r2 != 0.f) {
+                    p2->setRotation(f.r2);
+                }
+            }
+            ++autoplay.xdFixIdx;
+        }
+    }
+
     void macroStep(PlayLayer* layer) {
         if (!autoplay.active || autoplay.layer != layer || autoplay.macro.empty() || layer->m_isPracticeMode || buf.simulating) {
             return;
+        }
+        if (autoplay.macroXd) {
+            return;  // alpha.26: after the game's commands (macroStepXd)
         }
         if (progressPerStep <= 0) {
             return;  // one more step to know how the counter moves
@@ -12931,6 +13033,9 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
             macroStep(autoplay.layer);
         }
         GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
+        if (autoplay.macroXd && autoplay.active && !buf.simulating && static_cast<GJBaseGameLayer*>(autoplay.layer) == static_cast<GJBaseGameLayer*>(this)) {
+            macroStepXd(autoplay.layer);
+        }
     }
 
     void update(float dt) {
