@@ -8,7 +8,8 @@
 //   GET  /auth/logout
 //   GET  /api/me        who is logged in (or null)
 //   POST /api/runs      the global brain: a run autoplay finished (level, its fingerprint, TPS, inputs)
-//   GET  /api/runs      the best shared run of a level (most confirmed)
+//   GET  /api/runs      the best shared run of a level (most replayed to the end, fewest fails)
+//   POST /api/runs/result  a game replayed a brain run: to the end, or it kept dying
 //   GET  /api/latest    the newest mod version uploaded on the admin page
 //   GET  /download/latest   that file
 //   GET  /admin, POST /api/admin/upload   upload a new version (your Discord account only)
@@ -43,6 +44,7 @@ export default {
       if (url.pathname === "/api/account") return await account(url, env);
       if (url.pathname === "/api/runs" && request.method === "POST") return await runUpload(request, env);
       if (url.pathname === "/api/runs" && request.method === "GET") return await runGet(url, env);
+      if (url.pathname === "/api/runs/result" && request.method === "POST") return await runResult(request, env);
       if (url.pathname === "/api/beaten") return await beatenList(env);
       if (url.pathname === "/api/latest") return await latest(env);
       if (url.pathname === "/download/latest") return await download(env);
@@ -355,26 +357,87 @@ async function runUpload(request, env) {
   return json({ ok: true, confirmed: false });
 }
 
+// v3.1.1: runs that others replayed to the end come first, runs that keep failing go last.
+// (Before, every run had 1 "finish" and the newest one was handed out, even one that never worked
+// for anybody else.) The columns are added to an older database on first use.
+let resultsReady = false;
+async function ensureResults(env) {
+  if (resultsReady) return;
+  try { await env.DB.prepare(`ALTER TABLE runs ADD COLUMN fails INTEGER NOT NULL DEFAULT 0`).run(); } catch {}
+  try { await env.DB.prepare(`ALTER TABLE runs ADD COLUMN replays INTEGER NOT NULL DEFAULT 0`).run(); } catch {}
+  try {
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS run_results (run_key TEXT NOT NULL, player_id TEXT NOT NULL, ok INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (run_key, player_id))`
+    ).run();
+  } catch {}
+  resultsReady = true;
+}
+
 async function runGet(url, env) {
+  await ensureResults(env);
   const level = Number(url.searchParams.get("level"));
   const tps = Number(url.searchParams.get("tps"));
   const hash = String(url.searchParams.get("hash") || "").replace(/[^0-9a-f]/g, "").slice(0, 32);
   if (!Number.isInteger(level) || level <= 0) return json({ error: "bad level" }, 400);
+  // runs this game already tried and failed with
+  const skip = String(url.searchParams.get("skip") || "")
+    .split(",")
+    .map((k) => k.replace(/[^0-9a-f]/g, ""))
+    .filter((k) => k.length === 64)
+    .slice(0, 20);
+  const holes = skip.map((_, i) => `?${i + 4}`).join(",");
   const r = await env.DB.prepare(
-    `SELECT level_id, level_hash, tps, steps, inputs, confirms, version FROM runs
-     WHERE level_id = ?1 AND level_hash = ?2 AND tps = ?3 ORDER BY confirms DESC, last_confirm DESC LIMIT 1`
-  ).bind(level, hash, tps).first();
+    `SELECT run_key, level_id, level_hash, tps, steps, inputs, confirms, replays, fails, version FROM runs
+     WHERE level_id = ?1 AND level_hash = ?2 AND tps = ?3 ${skip.length ? `AND run_key NOT IN (${holes})` : ""}
+     ORDER BY (replays + confirms - fails) DESC, replays DESC, fails ASC, created ASC LIMIT 1`
+  ).bind(level, hash, tps, ...skip).first();
   if (!r) {
     // v3.0.2: what the brain has for this level instead (other TPS, other versions), so the game can say why
-    let others = { tps: [], versions: 0 };
+    let others = { tps: [], versions: 0, tried: skip.length };
     try {
       const t = await env.DB.prepare(`SELECT DISTINCT tps FROM runs WHERE level_id = ?1 AND level_hash = ?2`).bind(level, hash).all();
       const v = await env.DB.prepare(`SELECT COUNT(DISTINCT level_hash) AS n FROM runs WHERE level_id = ?1 AND level_hash != ?2`).bind(level, hash).first();
-      others = { tps: (t.results || []).map((x) => x.tps), versions: v?.n || 0 };
+      others = { tps: (t.results || []).map((x) => x.tps), versions: v?.n || 0, tried: skip.length };
     } catch {}
     return json({ found: false, others });
   }
-  return json({ found: true, level: r.level_id, tps: r.tps, steps: r.steps, confirms: r.confirms, version: r.version, inputs: JSON.parse(r.inputs) });
+  return json({
+    found: true, key: r.run_key, level: r.level_id, tps: r.tps, steps: r.steps, confirms: r.confirms,
+    replays: r.replays || 0, fails: r.fails || 0, version: r.version, inputs: JSON.parse(r.inputs),
+  });
+}
+
+// v3.1.1: a game played a brain run: to the end (ok) or it kept dying (not ok). One result a game a run.
+async function runResult(request, env) {
+  await ensureResults(env);
+  let b;
+  try {
+    b = await request.json();
+  } catch {
+    return json({ error: "bad json" }, 400);
+  }
+  const key = String(b.key || "").replace(/[^0-9a-f]/g, "");
+  const player = /^[0-9a-f]{32}$/.test(String(b.id || "")) ? String(b.id) : null;
+  if (key.length !== 64 || !player) return json({ error: "bad result" }, 400);
+  const ok = b.ok ? 1 : 0;
+  const now = Math.floor(Date.now() / 1000);
+  const had = await env.DB.prepare(`SELECT ok FROM run_results WHERE run_key = ?1 AND player_id = ?2`).bind(key, player).first();
+  if (had && had.ok === ok) return json({ ok: true, counted: false });
+  await env.DB.prepare(
+    `INSERT INTO run_results (run_key, player_id, ok, at) VALUES (?1, ?2, ?3, ?4)
+     ON CONFLICT (run_key, player_id) DO UPDATE SET ok = ?3, at = ?4`
+  ).bind(key, player, ok, now).run();
+  // a game that failed it before and now finished it (or the other way): the old result comes off
+  const col = ok ? "replays" : "fails";
+  const back = had ? (ok ? ", fails = MAX(fails - 1, 0)" : ", replays = MAX(replays - 1, 0)") : "";
+  await env.DB.prepare(`UPDATE runs SET ${col} = ${col} + 1${back} WHERE run_key = ?1`).bind(key).run();
+  if (ok) {
+    try {
+      const lv = await env.DB.prepare(`SELECT level_id FROM runs WHERE run_key = ?1`).bind(key).first();
+      if (lv) await env.DB.prepare(`INSERT OR IGNORE INTO finishes (player_id, run_key, level_id, at) VALUES (?1, ?2, ?3, ?4)`).bind(player, key, lv.level_id, now).run();
+    } catch {}
+  }
+  return json({ ok: true, counted: true });
 }
 
 // ---------- updates: the newest version, uploaded on /admin ----------

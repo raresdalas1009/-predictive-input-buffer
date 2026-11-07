@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS runs (
   version TEXT,
   created INTEGER NOT NULL,
   last_confirm INTEGER NOT NULL,
-  confirms INTEGER NOT NULL DEFAULT 1
+  confirms INTEGER NOT NULL DEFAULT 1,
+  replays INTEGER NOT NULL DEFAULT 0,
+  fails INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS runs_level ON runs (level_id, level_hash, tps);
 
@@ -39,3 +41,6 @@ ALTER TABLE players ADD COLUMN discord_id TEXT;
 CREATE TABLE IF NOT EXISTS link_codes (code TEXT PRIMARY KEY, player_id TEXT NOT NULL, discord_id TEXT, created INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS finishes (player_id TEXT NOT NULL, run_key TEXT NOT NULL, level_id INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (player_id, run_key));
 CREATE TABLE IF NOT EXISTS run_owners (run_key TEXT PRIMARY KEY, player_id TEXT NOT NULL);
+
+-- v3.1.1: one result a game a brain run (replayed to the end, or kept dying)
+CREATE TABLE IF NOT EXISTS run_results (run_key TEXT NOT NULL, player_id TEXT NOT NULL, ok INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (run_key, player_id));

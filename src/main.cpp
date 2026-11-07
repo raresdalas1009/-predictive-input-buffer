@@ -5235,6 +5235,11 @@ namespace online {
         std::vector<std::pair<int, bool>> runFlips;
         std::string levelPrint;
         bool macroIsBrain = false;
+        // v3.1.1: the brain run being played (its key on the site), and the ones that failed here
+        std::string brainKey;
+        std::vector<std::string> brainSkip;
+        int brainSkipLevel = 0;
+        bool brainReported = false;
         std::string macroUrl;  // v3.1.1: the Hyperbolus download the macro came from (empty: yours / the brain)
         std::vector<MacroFix> macroFixes;  // test 89: frames converted to steps
         int macroFixCount = 0;
@@ -5614,6 +5619,12 @@ namespace online {
             return;
         }
         int id = layer->m_level->m_levelID.value();
+        if (autoplay.brainSkipLevel != id) {
+            autoplay.brainSkip.clear();
+            autoplay.brainSkipLevel = id;
+        }
+        autoplay.brainKey.clear();
+        autoplay.brainReported = false;
         if (id > 0 && !layer->m_level->m_twoPlayerMode && !std::string_view(online::URL).empty() &&
             Mod::get()->getSettingValue<bool>("global-brain")) {
             brainFetch(id, levelFingerprint(layer->m_level));  // without a run there: loadLocalMacro
@@ -6104,11 +6115,17 @@ namespace online {
     void brainFetch(int levelId, std::string print) {
         int tps = static_cast<int>(settingTps());
         say("autoplay: asking the global brain for a run of this level...");
-        std::thread([levelId, print, tps] {
+        std::string skip;
+        for (auto const& k : autoplay.brainSkip) {
+            skip += (skip.empty() ? "" : ",") + k;
+        }
+        std::thread([levelId, print, tps, skip] {
             auto res = web::WebRequest().timeout(std::chrono::seconds(15)).userAgent("ClickBeforeFrames")
-                .getSync(fmt::format("{}/api/runs?level={}&hash={}&tps={}", online::URL, levelId, print, tps));
+                .getSync(fmt::format("{}/api/runs?level={}&hash={}&tps={}{}", online::URL, levelId, print, tps, skip.empty() ? "" : "&skip=" + skip));
             std::optional<Macro> got;
-            int confirms = 0;
+            int confirms = 0, replays = 0, fails = 0;
+            std::string key;
+            int tried = 0;
             std::string why;
             if (res.ok()) {
                 if (auto j = res.json(); j.isOk()) {
@@ -6126,6 +6143,7 @@ namespace online {
                             }
                         }
                         int otherVersions = o.contains("versions") ? static_cast<int>(o["versions"].asInt().unwrapOr(0)) : 0;
+                        tried = o.contains("tried") ? static_cast<int>(o["tried"].asInt().unwrapOr(0)) : 0;
                         if (!tpsList.empty()) {
                             why = fmt::format(" (it has runs of this level at {} TPS; you play at {})", tpsList, tps);
                         }
@@ -6140,6 +6158,9 @@ namespace online {
                         m.fps = tps;
                         m.levelId = levelId;
                         confirms = static_cast<int>(v["confirms"].asInt().unwrapOr(1));
+                        replays = static_cast<int>(v["replays"].asInt().unwrapOr(0));
+                        fails = static_cast<int>(v["fails"].asInt().unwrapOr(0));
+                        key = v["key"].asString().unwrapOr("");
                         for (auto const& in : v["inputs"]) {
                             if (in.isArray() && in.size() == 2) {
                                 int f = static_cast<int>(in[0].asInt().unwrapOr(0));
@@ -6153,11 +6174,16 @@ namespace online {
                     }
                 }
             }
-            queueInMainThread([got, confirms, levelId, why] {
+            queueInMainThread([got, confirms, replays, fails, key, tried, levelId, why] {
                 auto* layer = GameManager::get()->m_playLayer;
                 bool here = autoplay.active && layer && layer->m_level && layer->m_level->m_levelID.value() == levelId;
                 if (!got) {
-                    say("autoplay: the global brain has no run of this level for you yet{}", why);
+                    if (tried > 0) {
+                        say("autoplay: the global brain has no other run of this level ({} failed here)", tried);
+                    }
+                    else {
+                        say("autoplay: the global brain has no run of this level for you yet{}", why);
+                    }
                     if (here) {
                         loadLocalMacro(layer);  // v3.0.2: then your macros, then Hyperbolus
                     }
@@ -6169,9 +6195,15 @@ namespace online {
                 if (!here) {
                     return;
                 }
-                if (applyMacro(*got, fmt::format("global brain run ({} finish{})", confirms, confirms == 1 ? "" : "es"))) {
+                // v3.1.1: the run others replayed to the end most comes first
+                auto credit = replays > 0 ? fmt::format("global brain run (replayed to the end {} time{}{})", replays, replays == 1 ? "" : "s",
+                                                        fails ? fmt::format(", failed {}", fails) : "")
+                                          : fmt::format("global brain run (not replayed by anyone yet{})", fails ? fmt::format(", failed {}", fails) : "");
+                if (applyMacro(*got, credit)) {
                     // recorded by the same counter it's played by: no shift first
                     autoplay.macroIsBrain = true;
+                    autoplay.brainKey = key;
+                    autoplay.brainReported = false;
                     if (!autoplay.macroTuned) {
                         autoplay.macroTrials = { { 0, false }, { 1, false }, { -1, false } };
                         autoplay.macroTrialReach.assign(3, -1);
@@ -6750,10 +6782,29 @@ namespace online {
         return fmt::format("{:016x}", h);
     }
 
+    // v3.1.1: tells the brain how its run went here: to the end, or it kept dying (it ranks runs by it)
+    void brainResult(bool ok) {
+        if (autoplay.brainKey.empty() || autoplay.brainReported || std::string_view(online::URL).empty()) {
+            return;
+        }
+        autoplay.brainReported = true;
+        std::string body = fmt::format(R"({{"id":"{}","key":"{}","ok":{}}})", online::id(), autoplay.brainKey, ok ? "true" : "false");
+        std::thread([body] {
+            (void)web::WebRequest().timeout(std::chrono::seconds(15)).userAgent("ClickBeforeFrames").header("Content-Type", "application/json")
+                .bodyString(body).postSync(std::string(online::URL) + "/api/runs/result");
+        }).detach();
+    }
+
     void brainUpload(PlayLayer* layer) {
         if (std::string_view(online::URL).empty() || !Mod::get()->getSettingValue<bool>("global-brain") || !layer->m_level ||
             layer->m_level->m_levelID.value() <= 0 || layer->m_level->m_twoPlayerMode || autoplay.runFlips.size() < 1 ||
             autoplay.macroIsBrain) {
+            return;
+        }
+        // v3.1.1: a run a macro's position records kept on its path can't be replayed from its clicks
+        // alone: it would fail in every other game
+        if (autoplay.macroFixCount > 0 || autoplay.macroForceX) {
+            say("autoplay: the run isn't shared with the global brain: the macro's position records helped it, its clicks alone don't finish");
             return;
         }
         std::string inputs;
@@ -6957,6 +7008,20 @@ namespace online {
                         ++here;
                     }
                 }
+                // v3.1.1: the brain's run dying twice at one spot here: it's reported (runs that fail go
+                // last) and the brain's next best run is played
+                if (autoplay.macroIsBrain && here >= 2 && !autoplay.brainKey.empty() && layer->m_level) {
+                    say("autoplay: the global brain's run died twice at step {} here: it's reported, asking the brain for its next best run", reached);
+                    brainResult(false);
+                    autoplay.brainSkip.push_back(autoplay.brainKey);
+                    autoplay.brainKey.clear();
+                    autoplay.macro.clear();
+                    autoplay.fromMacro.clear();
+                    autoplay.macroIsBrain = false;
+                    autoplay.macroDeaths.clear();
+                    brainFetch(layer->m_level->m_levelID.value(), levelFingerprint(layer->m_level));
+                    return;
+                }
                 // test 77: a downloaded macro dying twice in its first 5%: it doesn't work here (an
                 // older GD, or a broken one): the next best one is downloaded
                 auto* lvl = layer->m_level;
@@ -7151,6 +7216,9 @@ namespace online {
         drawTrail();
         say("autoplay finished the level: the whole run is saved, it plays it the same from the first attempt next time");
         if (!layer->m_startPosObject) {
+            if (autoplay.macroIsBrain) {
+                brainResult(true);  // v3.1.1: the brain's run finished here: it ranks higher
+            }
             brainUpload(layer);  // test 90
         }
         if (autoplay.generating) {
