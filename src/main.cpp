@@ -5143,7 +5143,7 @@ namespace online {
     std::string updateButtonText();
     bool updateAvailable();
     std::string levelFingerprint(GJGameLevel* level);
-    void brainFetch(int levelId, std::string print);
+    void brainFetch(int levelId, std::string print, int forceTps = 0);
 
     int macroOffsetSetting = 0;  // test 93: read once an attempt
     bool macroFixesSetting = true;
@@ -6536,20 +6536,23 @@ namespace online {
     }
 
     // test 90: the run of this level finished the most times by other games' autoplay
-    void brainFetch(int levelId, std::string print) {
-        int tps = static_cast<int>(settingTps());
+    // v3.2: forceTps: the brain's run at another TPS (it's played at that TPS, Macro Plays At Its TPS)
+    void brainFetch(int levelId, std::string print, int forceTps) {
+        int tps = forceTps > 0 ? forceTps : static_cast<int>(settingTps());
         say("autoplay: asking the global brain for a run of this level...");
         std::string skip;
         for (auto const& k : autoplay.brainSkip) {
             skip += (skip.empty() ? "" : ",") + k;
         }
-        std::thread([levelId, print, tps, skip] {
+        bool autoTps = Mod::get()->getSettingValue<bool>("macro-auto-tps");
+        std::thread([levelId, print, tps, skip, forceTps, autoTps] {
             auto res = web::WebRequest().timeout(std::chrono::seconds(15)).userAgent("ClickBeforeFrames")
                 .getSync(fmt::format("{}/api/runs?level={}&hash={}&tps={}{}", online::URL, levelId, print, tps, skip.empty() ? "" : "&skip=" + skip));
             std::optional<Macro> got;
             int confirms = 0, replays = 0, fails = 0;
             std::string key;
             int tried = 0;
+            int otherTps = 0;
             std::string why;
             if (res.ok()) {
                 if (auto j = res.json(); j.isOk()) {
@@ -6563,6 +6566,9 @@ namespace online {
                                 int tt = static_cast<int>(t.asInt().unwrapOr(0));
                                 if (tt > 0 && tt != tps) {
                                     tpsList += fmt::format("{}{}", tpsList.empty() ? "" : ", ", tt);
+                                    if (!otherTps && tt >= 240 && tt <= 1000) {
+                                        otherTps = tt;
+                                    }
                                 }
                             }
                         }
@@ -6621,9 +6627,15 @@ namespace online {
                     }
                 }
             }
-            queueInMainThread([got, confirms, replays, fails, key, tried, levelId, why] {
+            queueInMainThread([got, confirms, replays, fails, key, tried, levelId, why, otherTps, forceTps, autoTps, print] {
                 auto* layer = GameManager::get()->m_playLayer;
                 bool here = autoplay.active && layer && layer->m_level && layer->m_level->m_levelID.value() == levelId;
+                // v3.2: the brain has this level only at another TPS: that run, played at its TPS
+                if (!got && tried == 0 && otherTps > 0 && forceTps == 0 && autoTps && here) {
+                    say("autoplay: the global brain has this level at {} TPS: autoplay plays it at {} TPS", otherTps, otherTps);
+                    brainFetch(levelId, print, otherTps);
+                    return;
+                }
                 if (!got) {
                     if (tried > 0) {
                         say("autoplay: the global brain has no other run of this level ({} failed here)", tried);
@@ -7313,7 +7325,7 @@ namespace online {
 
     void fetchOnlineMacro(int levelId);
     bool applyMacro(struct Macro const& m, std::string const& credit);
-    void brainFetch(int levelId, std::string print);
+    void brainFetch(int levelId, std::string print, int forceTps);
 
     void autoplaySet(PlayLayer* layer, bool down) {
         if (buf.appliedInput == down) {
@@ -7635,7 +7647,7 @@ namespace online {
                     }
                     say("autoplay: the xdBot macro died at step {} with every FPS tried: it's played as it is, the next macro is tried after 4 deaths here", reached);
                 }
-                else if (here >= 2 && autoplay.macroXd) {
+                else if (here >= 2 && (autoplay.macroXd || (autoplay.macroIsBrain && !autoplay.macroFixes.empty()))) {
                     say("autoplay: the xdBot macro died at step {} again: it's played as it is (no planning mixed in), the next macro is tried after 4 deaths here", reached);
                 }
                 else if (here >= 2) {
@@ -9510,7 +9522,7 @@ namespace online {
     }
 
     void macroGuard(PlayLayer* layer, PlayerObject* p1) {
-        if (autoplay.macroXd || autoplay.macroByX || autoplay.macroTwoPlayer || autoplay.macroDeaths.empty() || !autoplay.macroTuned ||
+        if (autoplay.macroXd || (autoplay.macroIsBrain && !autoplay.macroFixes.empty()) || autoplay.macroByX || autoplay.macroTwoPlayer || autoplay.macroDeaths.empty() || !autoplay.macroTuned ||
             autoplay.macroIdx >= autoplay.macro.size()) {
             mguard.searching = false;
             return;
@@ -10727,6 +10739,9 @@ public:
     }
 
     static ccColor3B accentColor() {
+        if (!Mod::get()->hasSavedValue("ui-accent")) {
+            return { 255, 46, 59 };  // v3.2: the website's red
+        }
         int i = Mod::get()->getSavedValue<int>("ui-accent", 0);
         if (i >= 0 && i < static_cast<int>(std::size(ACCENTS))) {
             return ACCENTS[i];
@@ -10787,6 +10802,81 @@ private:
     bool m_dragging = false;
     float m_shootTimer = 2.f;
     CCNode* m_sky = nullptr;
+    // v3.2: the site's look: TV static, an eye in the logo that follows the cursor, eyes in the snow
+    CCSprite* m_static = nullptr;
+    float m_staticT = 0.f;
+    CCNode* m_eye = nullptr;
+    CCNode* m_eyeIris = nullptr;
+    float m_eyeW = 0.f, m_eyeX = 0.f, m_eyeY = 0.f, m_eyeTX = 0.f, m_eyeTY = 0.f, m_eyeWander = 0.f;
+    float m_blinkIn = 2.5f, m_blink = -1.f;
+    float m_ghostIn = 3.f;
+
+    static CCTexture2D* noiseTexture() {
+        static Ref<CCTexture2D> tex;
+        if (!tex) {
+            constexpr int N = 128;
+            std::vector<uint8_t> px(N * N * 4);
+            uint32_t seed = 2463534242u;
+            for (int i = 0; i < N * N; ++i) {
+                seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+                float v = static_cast<float>(seed & 0xffff) / 65535.f;
+                uint8_t b = static_cast<uint8_t>(v * v * 235.f);
+                px[i * 4] = px[i * 4 + 1] = px[i * 4 + 2] = b;
+                px[i * 4 + 3] = 255;
+            }
+            auto* t = new CCTexture2D();
+            t->initWithData(px.data(), kCCTexture2DPixelFormat_RGBA8888, N, N, CCSize(N, N));
+            t->autorelease();
+            ccTexParams params { GL_NEAREST, GL_NEAREST, GL_REPEAT, GL_REPEAT };
+            t->setTexParameters(&params);
+            tex = t;
+        }
+        return tex;
+    }
+
+    static std::vector<CCPoint> almond(float w, float h, int n = 18) {
+        std::vector<CCPoint> pts;
+        auto bez = [](float a, float b, float c, float d, float t) {
+            float u = 1.f - t;
+            return u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d;
+        };
+        for (int i = 0; i <= n; ++i) {
+            float t = static_cast<float>(i) / n;
+            pts.push_back({ bez(-w / 2, -w * 0.31f, w * 0.31f, w / 2, t), bez(0, h * 0.87f, h * 0.87f, 0, t) });
+        }
+        for (int i = 1; i < n; ++i) {
+            float t = static_cast<float>(i) / n;
+            pts.push_back({ bez(w / 2, w * 0.31f, -w * 0.31f, -w / 2, t), bez(0, -h * 0.87f, -h * 0.87f, 0, t) });
+        }
+        return pts;
+    }
+
+    // an eye like the site's: white, a blue iris, a red pupil; `iris` gets the part that looks around
+    CCNode* makeEye(float w, CCNode** iris, ccColor3B irisColor = { 46, 107, 255 }, ccColor3B pupilColor = { 224, 20, 31 }) {
+        float h = w * 0.62f;
+        auto shape = almond(w, h / 2.f);
+        auto* eye = CCNode::create();
+        auto* stencil = CCDrawNode::create();
+        stencil->drawPolygon(shape.data(), static_cast<unsigned>(shape.size()), { 1, 1, 1, 1 }, 0.f, { 0, 0, 0, 0 });
+        auto* clip = CCClippingNode::create(stencil);
+        eye->addChild(clip);
+        auto* white = CCDrawNode::create();
+        white->drawPolygon(shape.data(), static_cast<unsigned>(shape.size()), { 0.95f, 0.95f, 0.96f, 1.f }, 0.f, { 0, 0, 0, 0 });
+        clip->addChild(white);
+        auto* look = CCDrawNode::create();
+        float r = h * 0.36f;
+        circle(look, { 0.f, 0.f }, r, col(irisColor, 1.f), 28, 0.8f, col({ 6, 16, 48 }, 1.f));
+        circle(look, { 0.f, 0.f }, r * 0.45f, col(pupilColor, 1.f), 20);
+        circle(look, { -r * 0.35f, r * 0.35f }, r * 0.2f, col({ 255, 255, 255 }, 0.85f), 12);
+        clip->addChild(look);
+        auto* rim = CCDrawNode::create();
+        rim->drawPolygon(shape.data(), static_cast<unsigned>(shape.size()), { 0, 0, 0, 0 }, 1.f, { 0.04f, 0.04f, 0.06f, 1.f });
+        eye->addChild(rim);
+        if (iris) {
+            *iris = look;
+        }
+        return eye;
+    }
     // test 66: the online count in the footer
     CCLabelBMFont* m_onlineLabel = nullptr;
     CCDrawNode* m_onlineDot = nullptr;
@@ -11048,7 +11138,8 @@ private:
         roundRect(stencil, { 0.f, 0.f, W, H }, 14.f, { 1, 1, 1, 1 });
         auto* clip = CCClippingNode::create(stencil);
         m_frame->addChild(clip, -2);
-        ccColor3B back = BACKS[std::clamp(m_bg, 0, static_cast<int>(std::size(BACKS)) - 1)];
+        ccColor3B back = Mod::get()->hasSavedValue("ui-bg") ? BACKS[std::clamp(m_bg, 0, static_cast<int>(std::size(BACKS)) - 1)]
+                                                             : ccColor3B { 20, 20, 24 };  // v3.2: the website's near-black
         GLubyte a = static_cast<GLubyte>(253 * opacity);
         CCLayerGradient* sky = nullptr;
         if (m_light) {
@@ -11066,8 +11157,21 @@ private:
             seed = seed * 1103515245u + 12345u;
             return static_cast<float>((seed >> 8) & 0xffff) / 65535.f;
         };
+        m_static = nullptr;
         if (!m_light) {
-            // stars, drifting slowly, twinkling
+            // v3.2: TV static over the background, with scan lines, like the website
+            m_static = CCSprite::createWithTexture(noiseTexture(), CCRect(0.f, 0.f, W, H));
+            m_static->setAnchorPoint({ 0.f, 0.f });
+            m_static->setOpacity(46);
+            clip->addChild(m_static);
+            auto* scan = CCDrawNode::create();
+            for (float y = 0.f; y < H; y += 3.f) {
+                scan->drawSegment({ 0.f, y }, { W, y }, 0.35f, { 0.f, 0.f, 0.f, 0.28f });
+            }
+            clip->addChild(scan);
+        }
+        if (false) {
+            // (the old stars, drifting slowly, twinkling)
             for (int layer = 0; layer < 2; ++layer) {
                 auto* field = CCNode::create();
                 clip->addChild(field);
@@ -11121,14 +11225,18 @@ private:
         m_onlineDot->setVisible(false);
         refreshOnline();
 
-        // the logo: a big glowing CBF with the version next to it
+        // the logo (v3.2): an eye that follows your cursor and blinks, CBF next to it, the version under
+        m_eyeW = 30.f;
+        m_eye = makeEye(m_eyeW, &m_eyeIris);
+        m_eye->setPosition({ 13.f + m_eyeW / 2.f, H - 27.f });
+        m_frame->addChild(m_eye, 2);
         for (int i = 3; i >= 1; --i) {
-            auto* g = label(m_frame, "CBF", 1.15f + i * 0.04f, m_t.main, { 16.f - i * 1.2f, H - 30.f }, { 0.f, 0.5f }, true);
+            auto* g = label(m_frame, "CBF", 0.95f + i * 0.04f, m_t.main, { 48.f - i * 1.2f, H - 25.f }, { 0.f, 0.5f }, true);
             g->setOpacity(static_cast<GLubyte>(35 / i));
         }
-        auto* logo = label(m_frame, "CBF", 1.15f, m_light ? m_t.main : m_t.soft, { 16.f, H - 30.f }, { 0.f, 0.5f }, true);
-        float lw = logo->getScaledContentSize().width;
-        label(m_frame, Mod::get()->getVersion().toVString(), 0.36f, m_t.main, { 18.f + lw, H - 38.f }, { 0.f, 0.5f }, true);
+        label(m_frame, "CBF", 0.95f, m_light ? m_t.main : m_t.soft, { 48.f, H - 25.f }, { 0.f, 0.5f }, true);
+        label(m_frame, Mod::get()->getVersion().toVString(), 0.3f, m_muted, { 48.f, H - 43.f }, { 0.f, 0.5f }, true)
+            ->limitLabelWidth(SIDE - 56.f, 0.3f, 0.15f);
         auto* sep = CCLayerColor::create({ m_t.main.r, m_t.main.g, m_t.main.b, 110 }, SIDE - 28.f, 1.f);
         sep->setPosition({ 14.f, H - 52.f });
         m_frame->addChild(sep);
@@ -11771,7 +11879,7 @@ private:
     // full size): the opening is redone to your scale
     void show() override {
         Popup::show();
-        float sc = std::clamp(Mod::get()->getSavedValue<float>("ui-scale", 1.f), 0.7f, 1.3f);
+        float sc = std::clamp(Mod::get()->getSavedValue<float>("ui-scale", 1.f), 0.4f, 1.3f);
         m_mainLayer->stopAllActions();
         m_mainLayer->setScale(sc * 0.85f);
         m_mainLayer->runAction(CCEaseBackOut::create(CCScaleTo::create(0.25f, sc)));
@@ -11838,7 +11946,7 @@ private:
             m_muted = { 150, 150, 192 };
             m_cyan = { 110, 230, 255 };
         }
-        m_mainLayer->setScale(std::clamp(Mod::get()->getSavedValue<float>("ui-scale", 1.f), 0.7f, 1.3f));
+        m_mainLayer->setScale(std::clamp(Mod::get()->getSavedValue<float>("ui-scale", 1.f), 0.4f, 1.3f));
     }
 
     void rebuildAll() {
@@ -11871,8 +11979,64 @@ private:
                 rebuildPage();  // test 91: the account page shows what just came in
             }
         }
+        // v3.2: the static moves, the logo eye looks at the cursor and blinks, eyes show up in the snow
+        m_staticT += dt;
+        if (m_static && m_staticT > 0.05f) {
+            m_staticT = 0.f;
+            m_static->setTextureRect(CCRect(static_cast<float>(std::rand() % 128), static_cast<float>(std::rand() % 128), W, H));
+        }
+        if (m_eye && m_eyeIris) {
+            CCPoint target { 0.f, 0.f };
+#ifdef GEODE_IS_DESKTOP
+            auto local = m_eye->convertToNodeSpace(geode::cocos::getMousePos());
+            float dist = std::max(1.f, ccpLength(local));
+            float k = std::min(1.f, dist / 160.f);
+            target = { local.x / dist * m_eyeW * 0.2f * k, local.y / dist * m_eyeW * 0.09f * k };
+#else
+            m_eyeWander -= dt;
+            if (m_eyeWander <= 0.f) {
+                m_eyeWander = 1.2f + static_cast<float>(std::rand() % 200) / 100.f;
+                m_eyeTX = (static_cast<float>(std::rand() % 200) / 100.f - 1.f) * m_eyeW * 0.2f;
+                m_eyeTY = (static_cast<float>(std::rand() % 200) / 100.f - 1.f) * m_eyeW * 0.08f;
+            }
+            target = { m_eyeTX, m_eyeTY };
+#endif
+            float a = std::min(1.f, dt * 12.f);
+            m_eyeX += (target.x - m_eyeX) * a;
+            m_eyeY += (target.y - m_eyeY) * a;
+            m_eyeIris->setPosition({ m_eyeX, m_eyeY });
+            m_blinkIn -= dt;
+            if (m_blinkIn <= 0.f && m_blink < 0.f) {
+                m_blink = 0.f;
+                m_blinkIn = 1.8f + static_cast<float>(std::rand() % 420) / 100.f;
+            }
+            if (m_blink >= 0.f) {
+                m_blink += dt / 0.22f;
+                float c = m_blink < 0.5f ? m_blink * 2.f : std::max(0.f, 2.f - m_blink * 2.f);
+                m_eye->setScaleY(std::max(0.05f, 1.f - c));
+                if (m_blink >= 1.f) {
+                    m_blink = -1.f;
+                    m_eye->setScaleY(1.f);
+                }
+            }
+        }
+        m_ghostIn -= dt;
+        if (m_ghostIn <= 0.f && m_sky && m_static) {
+            m_ghostIn = 2.5f + static_cast<float>(std::rand() % 400) / 100.f;
+            static constexpr ccColor3B IRIS[] = { { 46, 107, 255 }, { 159, 207, 42 }, { 255, 46, 59 }, { 122, 74, 34 }, { 200, 200, 210 } };
+            auto ic = IRIS[std::rand() % std::size(IRIS)];
+            float w = 16.f + static_cast<float>(std::rand() % 16);
+            auto* g = makeEye(w, nullptr, ic, ic.r > 200 && ic.g < 80 ? ccColor3B { 10, 0, 0 } : ccColor3B { 224, 20, 31 });
+            g->setPosition({ SIDE + 20.f + static_cast<float>(std::rand() % static_cast<int>(W - SIDE - 40.f)),
+                FOOT + 14.f + static_cast<float>(std::rand() % static_cast<int>(H - HEAD - FOOT - 28.f)) });
+            g->setScaleY(0.05f);
+            m_sky->addChild(g);
+            g->runAction(CCSequence::create(CCBlink::create(0.3f, 3), CCScaleTo::create(0.12f, 1.f, 1.f), CCDelayTime::create(1.1f),
+                CCScaleTo::create(0.08f, 1.f, 0.05f), CCScaleTo::create(0.1f, 1.f, 1.f), CCDelayTime::create(0.9f), CCBlink::create(0.25f, 3),
+                CCScaleTo::create(0.1f, 1.f, 0.02f), CCRemoveSelf::create(), nullptr));
+        }
         m_shootTimer -= dt;
-        if (m_shootTimer <= 0.f && m_sky && !m_light) {
+        if (false && m_shootTimer <= 0.f && m_sky && !m_light) {
             m_shootTimer = 3.5f + static_cast<float>(std::rand() % 400) / 100.f;
             auto* streak = CCLayerGradient::create({ 255, 255, 255, 0 }, { 255, 255, 255, 220 }, { 1.f, 0.f });
             streak->setContentSize({ 34.f, 1.2f });
@@ -12069,7 +12233,7 @@ private:
 
     void onScale(CCObject* sender) {
         float s = Mod::get()->getSavedValue<float>("ui-scale", 1.f) + (sender->getTag() > 0 ? 0.1f : -0.1f);
-        s = std::clamp(std::round(s * 10.f) / 10.f, 0.7f, 1.3f);
+        s = std::clamp(std::round(s * 10.f) / 10.f, 0.4f, 1.3f);
         Mod::get()->setSavedValue("ui-scale", s);
         m_mainLayer->setScale(s);
         refresh();
@@ -12260,6 +12424,11 @@ public:
     }
 
     static BufferMenu* create() {
+        // v3.2: the menu starts at half size once (the UI Scale buttons still go from 0.4x to 1.3x)
+        if (!Mod::get()->getSavedValue<bool>("ui-v32-scale", false)) {
+            Mod::get()->setSavedValue("ui-scale", 0.5f);
+            Mod::get()->setSavedValue("ui-v32-scale", true);
+        }
         auto* ret = new BufferMenu();
         if (ret->init()) {
             ret->autorelease();
