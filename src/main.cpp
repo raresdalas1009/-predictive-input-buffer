@@ -11991,7 +11991,7 @@ private:
             auto local = m_eye->convertToNodeSpace(geode::cocos::getMousePos());
             float dist = std::max(1.f, ccpLength(local));
             float k = std::min(1.f, dist / 160.f);
-            target = { local.x / dist * m_eyeW * 0.2f * k, local.y / dist * m_eyeW * 0.09f * k };
+            target = CCPoint(local.x / dist * m_eyeW * 0.2f * k, local.y / dist * m_eyeW * 0.09f * k);
 #else
             m_eyeWander -= dt;
             if (m_eyeWander <= 0.f) {
@@ -11999,7 +11999,7 @@ private:
                 m_eyeTX = (static_cast<float>(std::rand() % 200) / 100.f - 1.f) * m_eyeW * 0.2f;
                 m_eyeTY = (static_cast<float>(std::rand() % 200) / 100.f - 1.f) * m_eyeW * 0.08f;
             }
-            target = { m_eyeTX, m_eyeTY };
+            target = CCPoint(m_eyeTX, m_eyeTY);
 #endif
             float a = std::min(1.f, dt * 12.f);
             m_eyeX += (target.x - m_eyeX) * a;
