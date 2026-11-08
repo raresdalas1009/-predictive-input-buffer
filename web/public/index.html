@@ -203,8 +203,7 @@
   .online .row { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
   .online .meter { width: 7px; height: 70px; border-radius: 4px; background: #1d2550; position: relative; overflow: hidden; }
   .online .meter i { position: absolute; left: 0; right: 0; top: 0; height: 40%; background: #3c7bff; border-radius: 4px; transition: height 0.8s; }
-  .spark { width: 64px; height: 64px; flex: none; animation: twinkle 2.6s ease-in-out infinite; filter: drop-shadow(0 0 8px rgba(53, 220, 90, 0.6)); }
-  @keyframes twinkle { 0%, 100% { transform: scale(1) rotate(0deg); } 50% { transform: scale(0.82) rotate(12deg); } }
+  .watcher { width: 86px; height: 56px; flex: none; overflow: visible; filter: drop-shadow(0 0 7px rgba(53, 220, 90, 0.55)); }
   .offline { background: linear-gradient(160deg, #7a7a80, #5c5c62); }
   .offline .num { text-align: center; margin-top: 4px; }
   .offline .mono { font: 400 30px "VT323", monospace; color: #c8c8cc; letter-spacing: 0.04em; }
@@ -305,7 +304,7 @@
   .screen .scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.25); }
   .screen.offline .mono, .screen.players small { color: #c9cad2; }
   .screen.online .meter { background: rgba(0, 0, 0, 0.25); }
-  .screen .spark { filter: drop-shadow(0 0 6px rgba(53, 220, 90, 0.9)) drop-shadow(0 0 2px #fff); }
+  .screen .watcher { filter: drop-shadow(0 0 6px rgba(53, 220, 90, 0.75)) drop-shadow(0 0 1px #000); }
   /* an eye that shows up in the snow, looks around, blinks and fades away */
   .ghost {
     position: absolute; z-index: 0 !important; width: 74px; height: 46px; pointer-events: none;
@@ -361,7 +360,7 @@
     .eye { width: 130px; height: 81px; }
     .hint { position: static; margin: 0 0 10px 6px; }
   }
-  @media (prefers-reduced-motion: reduce) { .ghost { display: none; } .screen.stat, .screen.box { animation: none; } .spark, .dots::after, .roll, .screen::before, .led, .brand h1, .brand h1::before, .brand h1::after, .login { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .ghost { display: none; } .screen.stat, .screen.box { animation: none; } .watcher, .dots::after, .roll, .screen::before, .led, .brand h1, .brand h1::before, .brand h1::after, .login { animation: none; } }
 </style>
 </head>
 <body>
@@ -385,7 +384,29 @@
         <h3>Online now</h3>
         <div class="row">
           <div class="meter"><i id="onlineBar"></i></div>
-          <svg class="spark" viewBox="0 0 64 64" aria-hidden="true"><path d="M32 2 C35 22 42 29 62 32 C42 35 35 42 32 62 C29 42 22 35 2 32 C22 29 29 22 32 2Z" fill="#35d65a"/></svg>
+          <svg class="watcher" id="watcher" viewBox="0 0 86 56" aria-hidden="true">
+            <defs>
+              <radialGradient id="wSclera" cx="50%" cy="45%" r="60%"><stop offset="0" stop-color="#f1efe6"/><stop offset=".7" stop-color="#d9d3c4"/><stop offset="1" stop-color="#8f6f6a"/></radialGradient>
+              <radialGradient id="wIris" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#0d3a12"/><stop offset=".45" stop-color="#1fae3c"/><stop offset=".8" stop-color="#35d65a"/><stop offset="1" stop-color="#06280b"/></radialGradient>
+              <clipPath id="wClip"><path d="M3 28 C20 4 66 4 83 28 C66 52 20 52 3 28Z"/></clipPath>
+            </defs>
+            <g clip-path="url(#wClip)">
+              <rect width="86" height="56" fill="url(#wSclera)"/>
+              <g stroke="#b3202e" stroke-width=".8" fill="none" opacity=".75">
+                <path d="M4 28 C12 25 17 31 24 27 C27 25 30 27 32 26"/><path d="M82 28 C74 31 69 25 62 29 C59 31 56 28 54 30"/>
+                <path d="M8 36 C14 34 18 39 25 36"/><path d="M78 19 C72 21 68 16 62 19"/><path d="M10 20 C16 22 19 18 25 21"/>
+              </g>
+              <g id="wIrisG">
+                <circle cx="43" cy="28" r="14" fill="url(#wIris)"/>
+                <circle cx="43" cy="28" r="14" fill="none" stroke="#041a07" stroke-width="1.6"/>
+                <circle id="wPupil" cx="43" cy="28" r="4" fill="#020302"/>
+                <circle cx="38" cy="22.5" r="2.4" fill="#fff" opacity=".85"/>
+              </g>
+              <rect id="wLid" width="86" height="0" fill="#16151c"/>
+              <rect width="86" height="56" fill="none" stroke="#000" stroke-opacity=".35" stroke-width="10"/>
+            </g>
+            <path d="M3 28 C20 4 66 4 83 28 C66 52 20 52 3 28Z" fill="none" stroke="#0b0a10" stroke-width="2.2"/>
+          </svg>
           <div class="num" id="online">0</div>
         </div>
       </div><div class="chin"><i class="knob"></i><i class="knob"></i><span class="grille"></span><span class="brand-tag">CBF</span><i class="led"></i></div></div>
@@ -658,6 +679,26 @@
   (function schedule() {
     setTimeout(() => { blink(Math.random() < 0.25); schedule(); }, 1800 + Math.random() * 4200);
   })();
+  // the online eye: wide open, its pupil never stops shaking, it darts now and then and rarely blinks
+  (function watcher() {
+    const g = document.getElementById("wIrisG"), pupil = document.getElementById("wPupil"), lid = document.getElementById("wLid");
+    if (!g) return;
+    let bx = 0, by = 0, tx = 0, ty = 0, size = 4, lidH = 0, blinking = 0;
+    setInterval(() => { tx = Math.random() * 14 - 7; ty = Math.random() * 6 - 3; }, 1400);   // darts
+    setInterval(() => { size = 2.6 + Math.random() * 3.4; }, 900);                            // dilates
+    setInterval(() => { if (Math.random() < 0.5) blinking = 1; }, 5200);
+    (function shake() {
+      bx += (tx - bx) * 0.25; by += (ty - by) * 0.25;
+      const jx = (Math.random() - 0.5) * 2.4, jy = (Math.random() - 0.5) * 2.4;   // the tremor
+      g.setAttribute("transform", `translate(${(bx + jx).toFixed(2)} ${(by + jy).toFixed(2)})`);
+      const r = Number(pupil.getAttribute("r"));
+      pupil.setAttribute("r", (r + (size - r) * 0.3 + (Math.random() - 0.5) * 0.5).toFixed(2));
+      if (blinking) { lidH = Math.min(56, lidH + 14); if (lidH >= 56) blinking = 0; } else lidH = Math.max(0, lidH - 9);
+      lid.setAttribute("height", lidH.toFixed(1));
+      if (!reduce) setTimeout(shake, 33);
+    })();
+  })();
+
   // eyes in the snow: now and then one shows up on a random TV, looks around, blinks, and fades
   // each one a different eye: the CBF one, a cat's, a demon's, a bloodshot one, a void, a pixel one
   const ALMOND = "M3 23 C17 3 57 3 71 23 C57 43 17 43 3 23Z";
