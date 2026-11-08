@@ -5660,6 +5660,12 @@ namespace online {
         }
         autoplay.brainKey.clear();
         autoplay.brainReported = false;
+        // alpha.31: a macro the player picked (not the brain's run): straight to it
+        auto pick = Mod::get()->getSavedValue<std::string>(fmt::format("macro-pick-{}", id), "");
+        if (!pick.empty() && pick != "brain") {
+            loadLocalMacro(layer);
+            return;
+        }
         if (id > 0 && !layer->m_level->m_twoPlayerMode && !std::string_view(online::URL).empty() &&
             Mod::get()->getSettingValue<bool>("global-brain")) {
             brainFetch(id, levelFingerprint(layer->m_level));  // without a run there: loadLocalMacro
@@ -6324,6 +6330,208 @@ namespace online {
                 return tell(fmt::format("autoplay: no other Hyperbolus macro of this level to try ({} failed here before)", skippedBad));
             }
             tell("autoplay: none of the Hyperbolus macros of this level could be used (made at another TPS, or GDR2, which isn't supported yet)");
+        }).detach();
+    }
+
+    // alpha.31: every macro of a level the sites have, for the player to pick one (Choose Macro). Only
+    // what the lists say is fetched here; the file itself is downloaded when one is picked
+    struct MacroChoice {
+        OnlineMacro o;
+        int tps = 0;          // as the site says (0: not known before it's downloaded)
+        bool brain = false;   // the global brain's best run
+        int replays = 0, fails = 0, inputs = 0;
+    };
+
+    std::vector<MacroChoice> listMacroChoices(int levelId, std::string const& levelName, std::string const& print, int myTps) {
+        std::vector<MacroChoice> out;
+        auto get = [](std::string const& url) {
+            return web::WebRequest().timeout(std::chrono::seconds(15)).userAgent("ClickBeforeFrames").followRedirects(true).getSync(url);
+        };
+        // the global brain
+        if (!std::string_view(online::URL).empty() && !print.empty()) {
+            auto r = get(fmt::format("{}/api/runs?level={}&hash={}&tps={}", online::URL, levelId, print, myTps));
+            if (r.ok()) {
+                if (auto j = r.json(); j.isOk() && j.unwrap()["found"].asBool().unwrapOr(false)) {
+                    auto v = j.unwrap();
+                    MacroChoice c;
+                    c.brain = true;
+                    c.o.source = "Global brain";
+                    c.o.file = "best shared run";
+                    c.tps = myTps;
+                    c.replays = static_cast<int>(v["replays"].asInt().unwrapOr(0));
+                    c.fails = static_cast<int>(v["fails"].asInt().unwrapOr(0));
+                    c.inputs = v["inputs"].isArray() ? static_cast<int>(v["inputs"].size()) : 0;
+                    out.push_back(std::move(c));
+                }
+            }
+        }
+        // Hyperbolus
+        for (int page = 1; page <= 3; ++page) {
+            auto r = get(fmt::format("https://hyperbolus.net/api/macros?level_id={}&format=gdr&page={}", levelId, page));
+            if (!r.ok()) {
+                break;
+            }
+            auto j = r.json();
+            if (!j.isOk() || !j.unwrap()["data"].isArray()) {
+                break;
+            }
+            auto v = j.unwrap();
+            for (auto const& it : v["data"]) {
+                if (!it["files"].isArray() || it["files"].size() == 0) {
+                    continue;
+                }
+                auto const& f = it["files"][0];
+                MacroChoice c;
+                c.o.file = f["filename"].asString().unwrapOr("");
+                c.o.url = f["url"].asString().unwrapOr("");
+                c.o.downloads = static_cast<int>(f["downloads"].asInt().unwrapOr(0));
+                c.o.author = it["author"].isObject() ? it["author"]["name"].asString().unwrapOr("") : "";
+                c.o.notes = it["notes"].isString() ? it["notes"].asString().unwrapOr("") : "";
+                c.o.approved = !it["approved_at"].isNull();
+                auto name = lower(c.o.file);
+                if ((name.ends_with(".gdr") || name.ends_with(".json")) && c.o.url.rfind("https://hyperbolus.net/", 0) == 0) {
+                    out.push_back(std::move(c));
+                }
+            }
+            if (page >= static_cast<int>(v["last_page"].asInt().unwrapOr(1))) {
+                break;
+            }
+        }
+        auto norm = [](std::string const& v) {
+            std::string r;
+            for (unsigned char ch : v) {
+                if (std::isalnum(ch)) {
+                    r += static_cast<char>(std::tolower(ch));
+                }
+            }
+            return r;
+        };
+        // MacroDash
+        if (!levelName.empty()) {
+            std::string base = "https://raw.githubusercontent.com/downupstudio/macrodash/main/";
+            auto r = get(base + "macros-data.js");
+            if (r.ok()) {
+                std::string js = r.string().unwrapOr("");
+                auto field = [](std::string const& chunk, std::string const& key) -> std::string {
+                    auto k = chunk.find(key + ":");
+                    if (k == std::string::npos) {
+                        return "";
+                    }
+                    auto q1 = chunk.find('"', k);
+                    auto q2 = q1 == std::string::npos ? q1 : chunk.find('"', q1 + 1);
+                    return q2 == std::string::npos ? "" : chunk.substr(q1 + 1, q2 - q1 - 1);
+                };
+                for (size_t at = js.find("title:"); at != std::string::npos;) {
+                    size_t next = js.find("title:", at + 6);
+                    std::string chunk = js.substr(at, next == std::string::npos ? std::string::npos : next - at);
+                    std::string path = field(chunk, "gdr");
+                    if (norm(field(chunk, "title")) == norm(levelName) && path.rfind("macros/", 0) == 0 && path.find("..") == std::string::npos) {
+                        MacroChoice c;
+                        c.o.source = "MacroDash";
+                        c.o.file = path.substr(7);
+                        c.o.url = base + path;
+                        out.push_back(std::move(c));
+                    }
+                    at = next;
+                }
+            }
+        }
+        // Astral
+        if (!levelName.empty()) {
+            std::string q;
+            for (unsigned char ch : levelName) {
+                q += (std::isalnum(ch) || ch == '-' || ch == '_' || ch == '.') ? std::string(1, static_cast<char>(ch)) : fmt::format("%{:02X}", ch);
+            }
+            auto r = get(fmt::format("https://astral-api.gwddos.workers.dev/api/macros?page=1&limit=50&search={}", q));
+            if (r.ok()) {
+                if (auto j = r.json(); j.isOk() && j.unwrap()["macros"].isArray()) {
+                    for (auto const& it : j.unwrap()["macros"]) {
+                        std::string id = it["level_id"].isString() ? it["level_id"].asString().unwrapOr("") : std::to_string(it["level_id"].asInt().unwrapOr(0));
+                        std::string fileName = it["file_name"].asString().unwrapOr("");
+                        bool okName = !fileName.empty() && fileName.ends_with(".ast") && fileName.size() < 120 && fileName.find("..") == std::string::npos &&
+                            std::all_of(fileName.begin(), fileName.end(), [](unsigned char ch) { return std::isalnum(ch) || ch == '_' || ch == '.' || ch == '-'; });
+                        if (id != std::to_string(levelId) || !okName) {
+                            continue;
+                        }
+                        MacroChoice c;
+                        c.o.source = "Astral";
+                        c.o.file = it["macro_name"].isString() ? it["macro_name"].asString().unwrapOr(fileName) : fileName;
+                        c.o.url = std::string(ASTRAL_CONVERTER) + "/convert?file=" + fileName;
+                        c.o.author = it["macro_author"].isString() ? it["macro_author"].asString().unwrapOr("") : "";
+                        c.o.notes = it["description"].isString() ? it["description"].asString().unwrapOr("") : "";
+                        c.o.gameVersion = std::atof(it["game_version"].isString() ? it["game_version"].asString().unwrapOr("0").c_str() : "0");
+                        c.tps = it["tps"].isNumber() ? static_cast<int>(it["tps"].asInt().unwrapOr(0)) : 0;
+                        out.push_back(std::move(c));
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    // alpha.31: the player picked one: it's downloaded, kept as this level's macro (autoplay doesn't
+    // swap it for another or for the brain's run), and played from the next attempt
+    void useMacroChoice(int levelId, MacroChoice const& c) {
+        if (c.brain) {
+            Mod::get()->setSavedValue(fmt::format("macro-pick-{}", levelId), std::string("brain"));
+            say("autoplay: you picked the global brain's run for this level");
+            auto* layer = GameManager::get()->m_playLayer;
+            if (autoplay.active && layer && layer->m_level && layer->m_level->m_levelID.value() == levelId) {
+                autoplay.brainSkip.clear();
+                Mod::get()->setSavedValue(fmt::format("brain-skip-{}", levelId), std::string());
+                brainFetch(levelId, levelFingerprint(layer->m_level));
+            }
+            return;
+        }
+        say("autoplay: downloading {} from {}...", c.o.file, c.o.source);
+        std::filesystem::path dir = macroDir();
+        OnlineMacro o = c.o;
+        std::thread([levelId, o, dir] {
+            auto file = web::WebRequest().timeout(std::chrono::seconds(60)).userAgent("ClickBeforeFrames").followRedirects(true).getSync(o.url);
+            if (!file.ok()) {
+                queueInMainThread([o] { say("autoplay: couldn't download {} from {}", o.file, o.source); });
+                return;
+            }
+            auto bytes = std::move(file).data();
+            std::vector<uint8_t> data(bytes.begin(), bytes.end());
+            std::string why;
+            auto m = parseMacro(data, o.file, why);
+            if (m && o.source == "Astral") {
+                m->levelId = levelId;
+                if (o.gameVersion > 0.0) {
+                    m->gameVersion = o.gameVersion;
+                }
+                m->author = o.author;
+                m->bot = "Astral";
+            }
+            if (!m || (m->levelId != 0 && m->levelId != levelId)) {
+                queueInMainThread([o, why] { say("autoplay: {} couldn't be read{}", o.file, why.empty() ? "" : ": " + why); });
+                return;
+            }
+            bool json = !data.empty() && data[0] == '{';
+            std::error_code ec;
+            std::filesystem::create_directories(dir, ec);
+            std::filesystem::remove(dir / fmt::format("{}.gdr", levelId), ec);
+            std::filesystem::remove(dir / fmt::format("{}.gdr.json", levelId), ec);
+            (void)file::writeBinarySafe(dir / fmt::format("{}{}", levelId, json ? ".gdr.json" : ".gdr"), ByteSpan(data));
+            std::string credit = fmt::format("{} by {} ({}, GD {:.4f})", o.file, o.author.empty() ? m->author : o.author, o.source, m->gameVersion);
+            Macro got = std::move(*m);
+            queueInMainThread([got, credit, levelId, o] {
+                Mod::get()->setSavedValue(fmt::format("macro-src-{}", levelId), o.url + "\n" + credit);
+                Mod::get()->setSavedValue(fmt::format("macro-pick-{}", levelId), o.source);
+                Mod::get()->setSavedValue(fmt::format("macro-final-{}", levelId), true);
+                Mod::get()->setSavedValue(fmt::format("macro-shift-{}", levelId), std::string());
+                say("autoplay: you picked {}: it's this level's macro from now on (Forget Macro goes back to automatic)", credit);
+                auto* layer = GameManager::get()->m_playLayer;
+                if (!autoplay.active || !layer || !layer->m_level || layer->m_level->m_levelID.value() != levelId) {
+                    return;
+                }
+                autoplay.macroIsBrain = false;
+                if (applyMacro(got, credit)) {
+                    autoplay.macroUrl = o.url;
+                    autoplay.needRestart = true;
+                }
+            });
         }).detach();
     }
 
@@ -10328,6 +10536,122 @@ namespace online {
 // v3.0 menu: a sidebar (CBF logo, Log / Stage / Modes / Tools, theme picker, platform), a header
 // with the stage chip, a footer with the settings gear. Settings and Tuning are pages of their own
 // with a Done button. Everything is drawn in code (CCDrawNode), so it looks the same everywhere.
+// alpha.31: Choose Macro: the macros of this level on every site, the player picks one
+class MacroPicker : public geode::Popup {
+    int m_level = 0;
+    std::vector<MacroChoice> m_list;
+    CCLabelBMFont* m_status = nullptr;
+    geode::ScrollLayer* m_scroll = nullptr;
+    std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
+
+    static constexpr float PW = 400.f, PH = 260.f;
+
+public:
+    ~MacroPicker() override { *m_alive = false; }
+
+    static MacroPicker* create() {
+        auto* ret = new MacroPicker();
+        if (ret->init()) {
+            ret->autorelease();
+            return ret;
+        }
+        delete ret;
+        return nullptr;
+    }
+
+    bool init() {
+        if (!Popup::init(PW, PH, "GJ_square01.png")) {
+            return false;
+        }
+        this->setTitle("Choose Macro");
+        auto* pl = GameManager::get()->m_playLayer;
+        if (!pl || !pl->m_level) {
+            return false;
+        }
+        m_level = pl->m_level->m_levelID.value();
+        std::string name = pl->m_level->m_levelName;
+        std::string print = levelFingerprint(pl->m_level);
+        int tps = static_cast<int>(settingTps());
+        m_status = CCLabelBMFont::create("Looking on the global brain, Hyperbolus, MacroDash and Astral...", "chatFont.fnt");
+        m_status->setScale(0.7f);
+        m_status->setPosition({ PW / 2.f, PH / 2.f });
+        m_mainLayer->addChild(m_status);
+        auto alive = m_alive;
+        int level = m_level;
+        std::thread([alive, level, name, print, tps, this] {
+            auto list = listMacroChoices(level, name, print, tps);
+            queueInMainThread([alive, list, this] {
+                if (*alive) {
+                    show(list);
+                }
+            });
+        }).detach();
+        return true;
+    }
+
+    void show(std::vector<MacroChoice> const& list) {
+        m_list = list;
+        if (m_list.empty()) {
+            m_status->setString("No site has a macro of this level.");
+            return;
+        }
+        m_status->setVisible(false);
+        float vw = PW - 30.f, vh = PH - 60.f, rowH = 34.f;
+        m_scroll = geode::ScrollLayer::create({ vw, vh });
+        m_scroll->setPosition({ 15.f, 15.f });
+        m_mainLayer->addChild(m_scroll);
+        float total = std::max(vh, rowH * m_list.size());
+        m_scroll->m_contentLayer->setContentSize({ vw, total });
+        auto* menu = CCMenu::create();
+        menu->setPosition({ 0.f, 0.f });
+        menu->setContentSize({ vw, total });
+        m_scroll->m_contentLayer->addChild(menu);
+        for (size_t i = 0; i < m_list.size(); ++i) {
+            auto const& c = m_list[i];
+            float y = total - rowH * (i + 0.5f);
+            std::string top = fmt::format("[{}] {}", c.o.source, c.o.file);
+            std::string sub;
+            if (c.brain) {
+                sub = fmt::format("{} inputs, replayed to the end {} time{}, failed {}", c.inputs, c.replays, c.replays == 1 ? "" : "s", c.fails);
+            }
+            else {
+                if (!c.o.author.empty()) sub += "by " + c.o.author;
+                if (c.tps > 0) sub += fmt::format("{}{} TPS", sub.empty() ? "" : "  ", c.tps);
+                if (c.o.gameVersion > 0.0) sub += fmt::format("{}GD {:.4g}", sub.empty() ? "" : "  ", c.o.gameVersion);
+                if (c.o.downloads > 0) sub += fmt::format("{}{} downloads", sub.empty() ? "" : "  ", c.o.downloads);
+                if (c.o.approved) sub += "  approved";
+                if (!c.o.notes.empty()) sub += "  \"" + c.o.notes.substr(0, 40) + "\"";
+            }
+            auto* t = CCLabelBMFont::create(top.c_str(), "bigFont.fnt");
+            t->setAnchorPoint({ 0.f, 0.5f });
+            t->setPosition({ 4.f, y + 6.f });
+            t->limitLabelWidth(vw - 80.f, 0.4f, 0.1f);
+            menu->addChild(t);
+            auto* s = CCLabelBMFont::create(sub.c_str(), "chatFont.fnt");
+            s->setAnchorPoint({ 0.f, 0.5f });
+            s->setPosition({ 4.f, y - 8.f });
+            s->limitLabelWidth(vw - 80.f, 0.55f, 0.1f);
+            s->setColor({ 200, 200, 220 });
+            menu->addChild(s);
+            auto* spr = ButtonSprite::create("Use", "goldFont.fnt", "GJ_button_01.png", 0.6f);
+            auto* b = CCMenuItemSpriteExtra::create(spr, this, menu_selector(MacroPicker::onUse));
+            b->setTag(static_cast<int>(i));
+            b->setPosition({ vw - 30.f, y });
+            menu->addChild(b);
+        }
+        m_scroll->scrollToTop();
+    }
+
+    void onUse(CCObject* sender) {
+        int i = static_cast<CCNode*>(sender)->getTag();
+        if (i < 0 || i >= static_cast<int>(m_list.size())) {
+            return;
+        }
+        useMacroChoice(m_level, m_list[i]);
+        this->onClose(nullptr);
+    }
+};
+
 class BufferMenu : public geode::Popup {
     struct Option {
         char const* key;    // mod setting, or nullptr for the runtime path view
@@ -11420,13 +11744,14 @@ private:
             menu->setPosition({ 0.f, 0.f });
             side->addChild(menu, 2);
             bool take = Mod::get()->getSavedValue<bool>("autoplay-takeover", false);
-            button(menu, take ? "Take Over: On" : "Take Over: Off", menu_selector(BufferMenu::onTakeOver), { PW / 2.f, y0 + PH - 66.f }, PW - 20.f,
+            button(menu, take ? "Take Over: On" : "Take Over: Off", menu_selector(BufferMenu::onTakeOver), { PW / 2.f, y0 + PH - 60.f }, PW - 20.f,
                 false, 0, 18.f, take ? std::optional<ccColor3B>(ccColor3B { 80, 200, 120 }) : std::nullopt);
-            button(menu, "Forget Level", menu_selector(BufferMenu::onForget), { PW / 2.f, y0 + PH - 90.f }, PW - 20.f);
-            button(menu, "Show On Screen", menu_selector(BufferMenu::onConsole), { PW / 2.f, y0 + PH - 114.f }, PW - 20.f);
+            button(menu, "Forget Level", menu_selector(BufferMenu::onForget), { PW / 2.f, y0 + PH - 82.f }, PW - 20.f);
+            button(menu, "Show On Screen", menu_selector(BufferMenu::onConsole), { PW / 2.f, y0 + PH - 104.f }, PW - 20.f);
+            button(menu, "Choose Macro", menu_selector(BufferMenu::onChooseMacro), { PW / 2.f, y0 + PH - 126.f }, PW - 20.f, true);  // alpha.31
             float hb = (PW - 26.f) / 2.f;
-            button(menu, "Macros", menu_selector(BufferMenu::onMacros), { 10.f + hb / 2.f, y0 + PH - 138.f }, hb);
-            button(menu, "Forget Macro", menu_selector(BufferMenu::onForgetMacro), { 16.f + hb * 1.5f, y0 + PH - 138.f }, hb);
+            button(menu, "Macros", menu_selector(BufferMenu::onMacros), { 10.f + hb / 2.f, y0 + PH - 148.f }, hb);
+            button(menu, "Forget Macro", menu_selector(BufferMenu::onForgetMacro), { 16.f + hb * 1.5f, y0 + PH - 148.f }, hb);
             button(menu, "Stop Autoplay", menu_selector(BufferMenu::onAutoplay), { PW / 2.f, y0 + 18.f }, PW - 20.f, false, 0, 20.f,
                 ccColor3B { 235, 80, 90 });
             side->setPositionX(was ? outX : inX);
@@ -11819,6 +12144,7 @@ private:
         Mod::get()->setSavedValue(fmt::format("macro-bad2-{}", id), std::string());
         Mod::get()->setSavedValue(fmt::format("macro-best-{}", id), std::string());
         Mod::get()->setSavedValue(fmt::format("macro-final-{}", id), false);
+        Mod::get()->setSavedValue(fmt::format("macro-pick-{}", id), std::string());  // alpha.31
         std::filesystem::remove(macroDir() / fmt::format("{}.best.gdr", id), ec);
         std::filesystem::remove(macroDir() / fmt::format("{}.best.gdr.json", id), ec);
         say("autoplay: {} for this level: looking again (brain, then Hyperbolus)",
@@ -11828,6 +12154,13 @@ private:
             onlineMacroTried.erase(id);
             autoplay.macroDeaths.clear();
             loadMacro(layer);
+        }
+    }
+
+    // alpha.31
+    void onChooseMacro(CCObject*) {
+        if (auto* p = MacroPicker::create()) {
+            p->show();
         }
     }
 
