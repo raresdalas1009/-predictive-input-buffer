@@ -276,6 +276,48 @@
     filter: drop-shadow(-1.5px 0 rgba(255, 46, 59, 0.55)) drop-shadow(1.5px 0 rgba(46, 107, 255, 0.55)); }
   .eye.glitch svg { transform: translateX(var(--gx, 0px)) skewX(var(--gs, 0deg)); }
 
+  /* v3.2: the screens are white static, a TV with no channel: light grey snow that moves, dark
+     text with a white halo so it reads through the snow, and now and then an eye looking out */
+  .screen.stat, .screen.box {
+    background-color: #d9dadf;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.25' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0.08 0 0 0 0 0.08 0 0 0 0 0.1 0 0 0 1.5 -0.45'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E"), linear-gradient(180deg, #eceef3, #c9cad1);
+    background-size: 180px 180px, 100% 100%;
+    animation: whiteSnow 0.3s steps(3) infinite;
+    color: #121216;
+    text-shadow: 0 0 3px #fff, 0 0 6px rgba(255, 255, 255, 0.9), -1px 0 rgba(255, 46, 59, 0.35), 1px 0 rgba(46, 107, 255, 0.35);
+    box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.55), inset 0 0 6px rgba(0, 0, 0, 0.9);
+  }
+  @keyframes whiteSnow { 0% { background-position: 0 0, 0 0; } 33% { background-position: -61px 43px, 0 0; } 66% { background-position: 47px -71px, 0 0; } 100% { background-position: 0 0, 0 0; } }
+  .screen.stat::before, .screen.box::before { mix-blend-mode: multiply; opacity: 0.35; }
+  .screen.stat::after, .screen.box::after {
+    background:
+      radial-gradient(120% 70% at 22% 0%, rgba(255, 255, 255, 0.35), transparent 45%),
+      radial-gradient(140% 120% at 50% 50%, transparent 55%, rgba(0, 0, 0, 0.5) 100%);
+  }
+  .screen .line { border-bottom-color: rgba(0, 0, 0, 0.14); }
+  .screen .line .v { color: #26262e; }
+  .screen .line .v span { color: #4b4b56; }
+  .screen .line .v span.by { color: #121216; }
+  .screen .empty { color: #4b4b56; }
+  .screen .scroll::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.3); }
+  .screen.offline .mono, .screen.players small { color: #2b2b33; }
+  .screen.online .meter { background: rgba(0, 0, 0, 0.25); }
+  .screen .spark { filter: drop-shadow(0 0 6px rgba(53, 220, 90, 0.9)) drop-shadow(0 0 2px #fff); }
+  /* an eye that shows up in the snow, looks around, blinks and fades away */
+  .ghost {
+    position: absolute; z-index: 0 !important; width: 74px; height: 46px; pointer-events: none;
+    opacity: 0; animation: ghostIn 3.4s ease-in-out forwards;
+  }
+  .ghost svg { width: 100%; height: 100%; display: block; }
+  .ghost .gl { animation: ghostLook 3.4s ease-in-out forwards; }
+  .ghost .lid { transform-box: fill-box; transform-origin: center; animation: ghostBlink 3.4s linear forwards; }
+  @keyframes ghostIn {
+    0% { opacity: 0; } 6% { opacity: 0.5; } 8% { opacity: 0.1; } 12% { opacity: 0.75; } 15% { opacity: 0.55; }
+    20%, 78% { opacity: 0.8; } 82% { opacity: 0.3; } 84% { opacity: 0.7; } 100% { opacity: 0; }
+  }
+  @keyframes ghostLook { 0%, 22% { transform: translate(0, 0); } 32%, 48% { transform: translate(-9px, 2px); } 58%, 74% { transform: translate(9px, -2px); } 100% { transform: translate(0, 0); } }
+  @keyframes ghostBlink { 0%, 50% { transform: scaleY(0); } 54% { transform: scaleY(1); } 58%, 100% { transform: scaleY(0); } }
+
   @media (max-width: 1150px) {
     .grid { grid-template-columns: 1fr; }
     .side { flex-direction: row; flex-wrap: wrap; }
@@ -316,7 +358,7 @@
     .eye { width: 130px; height: 81px; }
     .hint { position: static; margin: 0 0 10px 6px; }
   }
-  @media (prefers-reduced-motion: reduce) { .spark, .dots::after, .roll, .screen::before, .led, .brand h1, .brand h1::before, .brand h1::after, .login { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .ghost { display: none; } .screen.stat, .screen.box { animation: none; } .spark, .dots::after, .roll, .screen::before, .led, .brand h1, .brand h1::before, .brand h1::after, .login { animation: none; } }
 </style>
 </head>
 <body>
@@ -613,6 +655,32 @@
   (function schedule() {
     setTimeout(() => { blink(Math.random() < 0.25); schedule(); }, 1800 + Math.random() * 4200);
   })();
+  // eyes in the snow: now and then one shows up on a random TV, looks around, blinks, and fades
+  const GHOST = `<svg viewBox="0 0 74 46"><defs><clipPath id="gc"><path d="M3 23 C17 3 57 3 71 23 C57 43 17 43 3 23Z"/></clipPath></defs>
+    <g clip-path="url(#gc)"><rect width="74" height="46" fill="#f4f4f6"/>
+    <g class="gl"><circle cx="37" cy="23" r="12.5" fill="#1d4fd8"/><circle cx="37" cy="23" r="12.5" fill="none" stroke="#061030" stroke-width="1.6"/>
+    <circle cx="37" cy="23" r="5.5" fill="#e0141f"/><circle cx="33" cy="18.5" r="2.2" fill="#fff" opacity=".85"/></g>
+    <rect class="lid" width="74" height="46" fill="#16151c"/></g>
+    <path d="M3 23 C17 3 57 3 71 23 C57 43 17 43 3 23Z" fill="none" stroke="#0b0a10" stroke-width="2"/></svg>`;
+  (function ghosts() {
+    setTimeout(() => {
+      const screens = [...document.querySelectorAll(".screen.stat, .screen.box")].filter((x) => x.offsetParent);
+      if (!reduce && screens.length && !document.hidden) {
+        const scr = screens[(Math.random() * screens.length) | 0];
+        const g = document.createElement("div");
+        g.className = "ghost";
+        g.innerHTML = GHOST;
+        const sc = 0.7 + Math.random() * 0.9;
+        g.style.left = `${Math.random() * Math.max(10, scr.clientWidth - 74 * sc)}px`;
+        g.style.top = `${Math.random() * Math.max(10, scr.clientHeight - 46 * sc)}px`;
+        g.style.transform = `scale(${sc.toFixed(2)})`;
+        scr.appendChild(g);
+        setTimeout(() => g.remove(), 3600);
+      }
+      ghosts();
+    }, 1500 + Math.random() * 3500);
+  })();
+
   // the eye's snow moves, and now and then the picture jumps sideways for a moment
   const turb = document.getElementById("eyeTurb");
   let seed = 1;
