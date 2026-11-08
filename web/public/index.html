@@ -40,8 +40,19 @@
   }
   #static {
     position: fixed; inset: 0; width: 100%; height: 100%;
-    image-rendering: pixelated; z-index: 0; opacity: 0.55; pointer-events: none;
+    z-index: 0; opacity: 0.5; pointer-events: none;
   }
+  /* a CRT's lines, and a brighter band rolling down the screen */
+  .scan {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background: repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.32) 0 1px, transparent 1px 3px);
+  }
+  .roll {
+    position: fixed; left: 0; right: 0; top: -30vh; height: 30vh; z-index: 0; pointer-events: none;
+    background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.045) 45%, rgba(255, 255, 255, 0.07) 50%, rgba(255, 255, 255, 0.045) 55%, transparent);
+    animation: roll 7s linear infinite;
+  }
+  @keyframes roll { to { transform: translateY(160vh); } }
   .vignette {
     position: fixed; inset: 0; z-index: 0; pointer-events: none;
     background: radial-gradient(ellipse at 50% 40%, transparent 30%, rgba(0, 0, 0, 0.75) 100%);
@@ -211,11 +222,13 @@
     .eye { width: 130px; height: 81px; }
     .hint { position: static; margin: 0 0 10px 6px; }
   }
-  @media (prefers-reduced-motion: reduce) { .spark, .dots::after { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .spark, .dots::after, .roll { animation: none; } }
 </style>
 </head>
 <body>
-<canvas id="static" width="240" height="140"></canvas>
+<canvas id="static"></canvas>
+<div class="scan"></div>
+<div class="roll"></div>
 <div class="vignette"></div>
 <div class="wrap">
   <header class="bar">
@@ -291,6 +304,8 @@
                 <stop offset="1" stop-color="#000" stop-opacity="0.38"/>
               </radialGradient>
               <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+              <linearGradient id="lidG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2530"/><stop offset="1" stop-color="#121016"/></linearGradient>
+              <linearGradient id="lidG2" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#2a2530"/><stop offset="1" stop-color="#16131b"/></linearGradient>
               <clipPath id="eyeClip"><path d="M8 62 C46 8 154 8 192 62 C154 116 46 116 8 62Z"/></clipPath>
             </defs>
             <path d="M8 62 C46 8 154 8 192 62 C154 116 46 116 8 62Z" fill="#000" opacity="0.35" transform="translate(0 3)"/>
@@ -312,8 +327,9 @@
                 <circle cx="114" cy="74" r="2.2" fill="#fff" opacity="0.5"/>
               </g>
               <rect width="200" height="124" fill="url(#shade)"/>
-              <rect id="lidTop" x="0" y="0" width="200" height="0" fill="#16151c"/>
-              <rect id="lidBot" x="0" y="124" width="200" height="0" fill="#16151c"/>
+              <path id="lidTop" fill="url(#lidG)"/>
+              <path id="lidBot" fill="url(#lidG2)"/>
+              <path id="lash" fill="none" stroke="#050408" stroke-width="3" stroke-linecap="round"/>
             </g>
             <path d="M8 62 C46 8 154 8 192 62 C154 116 46 116 8 62Z" fill="none" stroke="#0b0a10" stroke-width="3"/>
             <path d="M14 50 C52 -2 148 -2 186 50" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="2"/>
@@ -416,21 +432,46 @@
 
   // animated static
   (function staticNoise() {
+    // TV snow: fine grain at half the screen's resolution, grains that smear sideways a little,
+    // a few torn lines, and the whole picture flickering. 6 frames are made once and shown in a
+    // random order at random offsets, so it never repeats visibly and costs almost nothing.
     const c = document.getElementById("static"), g = c.getContext("2d");
-    const img = g.createImageData(c.width, c.height), d = img.data;
-    let last = 0;
-    const frame = (t) => {
-      if (t - last > 55) {
-        last = t;
-        for (let i = 0; i < d.length; i += 4) {
-          const v = Math.random() < 0.5 ? Math.random() * 38 : Math.random() * 90;
-          d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
+    let frames = [], W = 0, H = 0, last = 0;
+    function make() {
+      W = c.width = Math.ceil(innerWidth / 2) + 64;
+      H = c.height = Math.ceil(innerHeight / 2) + 64;
+      c.style.width = W * 2 + "px"; c.style.height = H * 2 + "px";
+      frames = [];
+      for (let f = 0; f < 6; f++) {
+        const img = g.createImageData(W, H), px = new Uint32Array(img.data.buffer);
+        let carry = 0;
+        for (let y = 0; y < H; y++) {
+          const tear = Math.random() < 0.012 ? 40 + Math.random() * 60 : 0;   // a bright torn line
+          for (let x = 0; x < W; x++) {
+            // mostly dark grains, some bright ones; each pulls a bit of its left neighbour (sideways smear)
+            let v = Math.random();
+            v = v * v * 235;
+            v = v * 0.7 + carry * 0.3 + tear;
+            carry = v;
+            const b = v > 255 ? 255 : v | 0;
+            px[y * W + x] = 0xff000000 | (b << 16) | (b << 8) | b;
+          }
         }
-        g.putImageData(img, 0, 0);
+        frames.push(img);
       }
-      if (!reduce) requestAnimationFrame(frame);
+    }
+    make();
+    addEventListener("resize", () => { clearTimeout(make.t); make.t = setTimeout(make, 200); });
+    const draw = (t) => {
+      if (t - last > 40) {
+        last = t;
+        const img = frames[(Math.random() * frames.length) | 0];
+        g.putImageData(img, -((Math.random() * 64) | 0), -((Math.random() * 64) | 0));
+        c.style.opacity = (0.42 + Math.random() * 0.12).toFixed(3);   // the picture flickers
+      }
+      if (!reduce) requestAnimationFrame(draw);
     };
-    requestAnimationFrame(frame);
+    requestAnimationFrame(draw);
   })();
 
   // the eye: follows the cursor, blinks at random, its red pupil breathes and flares
@@ -444,7 +485,18 @@
   }
   const eye = document.getElementById("eye"), look = document.getElementById("look"), pupil = document.getElementById("pupil");
   const lidTop = document.getElementById("lidTop"), lidBot = document.getElementById("lidBot");
-  let tx = 0, ty = 0, cx = 0, cy = 0, closed = 0, closing = 0, flare = 0, hover = false;
+  const lash = document.getElementById("lash");
+  let tx = 0, ty = 0, cx = 0, cy = 0, closed = 0, closing = 0, hold = 0, flare = 0, hover = false;
+  // the lids follow the eye's own curve: open, the upper one sits above the eye and the lower one
+  // below; closed, both curves meet past the middle, so the whole eye is covered
+  function lids(k) {
+    const up = 8 + (70 - 8) * k, down = 116 - (116 - 56) * k;
+    const top = 62 - 54 * (1 - k), bot = 62 + 54 * (1 - k);
+    lidTop.setAttribute("d", `M-2 -2 H202 V62 H192 C154 ${up.toFixed(1)} 46 ${up.toFixed(1)} 8 62 H-2Z`);
+    lidBot.setAttribute("d", `M-2 126 H202 V62 H192 C154 ${down.toFixed(1)} 46 ${down.toFixed(1)} 8 62 H-2Z`);
+    lash.setAttribute("d", `M8 62 C46 ${up.toFixed(1)} 154 ${up.toFixed(1)} 192 62`);
+    lash.style.opacity = k > 0.02 ? 1 : 0;
+  }
   addEventListener("pointermove", (e) => {
     const r = eye.getBoundingClientRect();
     const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
@@ -466,11 +518,11 @@
   (function tick(t) {
     cx += (tx - cx) * 0.14; cy += (ty - cy) * 0.14;
     look.setAttribute("transform", `translate(${cx.toFixed(2)} ${cy.toFixed(2)})`);
-    if (closing) { closed = Math.min(1, closed + 0.32); if (closed >= 1) closing = 0; }
-    else closed = Math.max(0, closed - 0.18);
-    lidTop.setAttribute("height", (closed * 64).toFixed(1));
-    lidBot.setAttribute("y", (124 - closed * 62).toFixed(1));
-    lidBot.setAttribute("height", (closed * 62).toFixed(1));
+    // close fast, stay shut a moment, open a little slower
+    if (closing) { closed = Math.min(1, closed + 0.28); if (closed >= 1) { closing = 0; hold = 5; } }
+    else if (hold > 0) hold--;
+    else closed = Math.max(0, closed - 0.14);
+    lids(closed);
     flare = Math.max(0, flare - 0.025);
     const r = 14 + Math.sin(t / 900) * 1.2 + (hover ? 3 : 0) + flare * 4;
     pupil.setAttribute("r", r.toFixed(2));
