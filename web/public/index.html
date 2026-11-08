@@ -269,6 +269,9 @@
   .join b { font: 400 clamp(28px, 2.6vw, 40px) "VT323", monospace; letter-spacing: 0.04em; white-space: nowrap;
     text-shadow: -1.5px 0 rgba(255, 46, 59, 0.6), 1.5px 0 rgba(46, 107, 255, 0.6), 0 0 10px rgba(190, 205, 255, 0.3);
     animation: flicker 7s linear infinite 2.1s; }
+  .credit { display: inline-block; margin-top: 8px; color: var(--muted); }
+  .credit a { color: #c9d2ff; text-decoration: none; border-bottom: 1px dashed rgba(201, 210, 255, 0.5); }
+  .credit a:hover { color: #fff; border-bottom-color: #ff2e3b; }
   .psst { position: absolute; top: 10px; right: 44px; color: var(--muted); font: 400 22px "VT323", monospace; letter-spacing: 0.05em; }
   .psst::before { content: "\25CF  "; color: #ff2e3b; text-shadow: 0 0 6px #ff2e3b; animation: led 1.6s ease-in-out infinite; }
   .eye { display: block; width: 180px; height: 112px; cursor: pointer; flex: none; }
@@ -279,28 +282,28 @@
   /* v3.2: the screens are white static, a TV with no channel: light grey snow that moves, dark
      text with a white halo so it reads through the snow, and now and then an eye looking out */
   .screen.stat, .screen.box {
-    background-color: #d9dadf;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.25' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0.08 0 0 0 0 0.08 0 0 0 0 0.1 0 0 0 1.5 -0.45'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E"), linear-gradient(180deg, #eceef3, #c9cad1);
+    background-color: #3a3b41;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.25' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0.85 0 0 0 0 0.85 0 0 0 0 0.9 0 0 0 1.5 -0.5'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E"), linear-gradient(180deg, #4a4b52, #2c2d33);
     background-size: 180px 180px, 100% 100%;
     animation: whiteSnow 0.3s steps(3) infinite;
-    color: #121216;
-    text-shadow: 0 0 3px #fff, 0 0 6px rgba(255, 255, 255, 0.9), -1px 0 rgba(255, 46, 59, 0.35), 1px 0 rgba(46, 107, 255, 0.35);
+    color: #f3f3f6;
+    text-shadow: 0 0 3px #000, 0 0 7px rgba(0, 0, 0, 0.9), -1px 0 rgba(255, 46, 59, 0.45), 1px 0 rgba(46, 107, 255, 0.45);
     box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.55), inset 0 0 6px rgba(0, 0, 0, 0.9);
   }
   @keyframes whiteSnow { 0% { background-position: 0 0, 0 0; } 33% { background-position: -61px 43px, 0 0; } 66% { background-position: 47px -71px, 0 0; } 100% { background-position: 0 0, 0 0; } }
-  .screen.stat::before, .screen.box::before { mix-blend-mode: multiply; opacity: 0.35; }
+  .screen.stat::before, .screen.box::before { mix-blend-mode: multiply; opacity: 0.5; }
   .screen.stat::after, .screen.box::after {
     background:
-      radial-gradient(120% 70% at 22% 0%, rgba(255, 255, 255, 0.35), transparent 45%),
+      radial-gradient(120% 70% at 22% 0%, rgba(255, 255, 255, 0.16), transparent 45%),
       radial-gradient(140% 120% at 50% 50%, transparent 55%, rgba(0, 0, 0, 0.5) 100%);
   }
-  .screen .line { border-bottom-color: rgba(0, 0, 0, 0.14); }
-  .screen .line .v { color: #26262e; }
-  .screen .line .v span { color: #4b4b56; }
-  .screen .line .v span.by { color: #121216; }
-  .screen .empty { color: #4b4b56; }
-  .screen .scroll::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.3); }
-  .screen.offline .mono, .screen.players small { color: #2b2b33; }
+  .screen .line { border-bottom-color: rgba(255, 255, 255, 0.10); }
+  .screen .line .v { color: #dcdde4; }
+  .screen .line .v span { color: #a4a5b0; }
+  .screen .line .v span.by { color: #ffffff; }
+  .screen .empty { color: #a4a5b0; }
+  .screen .scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.25); }
+  .screen.offline .mono, .screen.players small { color: #c9cad2; }
   .screen.online .meter { background: rgba(0, 0, 0, 0.25); }
   .screen .spark { filter: drop-shadow(0 0 6px rgba(53, 220, 90, 0.9)) drop-shadow(0 0 2px #fff); }
   /* an eye that shows up in the snow, looks around, blinks and fades away */
@@ -410,7 +413,7 @@
     </section>
 
     <footer class="foot">
-      <p>Counts are anonymous: each game sends a random id, its device type and version every 90 seconds, and autoplay's finished runs (the level and the button presses, nothing about you). Both can be turned off in the mod's settings.</p>
+      <p>Counts are anonymous: each game sends a random id, its device type and version every 90 seconds, and autoplay's finished runs (the level and the button presses, nothing about you). Both can be turned off in the mod's settings.<br><span class="credit">Base design by <a href="https://noiz.bio/tkn" target="_blank" rel="noopener">Token</a></span></p>
       <div class="psst">PSST, I'M CLICKABLE!</div>
       <div class="join">
         <b>JOIN THE DISCORD:</b>
@@ -656,12 +659,36 @@
     setTimeout(() => { blink(Math.random() < 0.25); schedule(); }, 1800 + Math.random() * 4200);
   })();
   // eyes in the snow: now and then one shows up on a random TV, looks around, blinks, and fades
-  const GHOST = `<svg viewBox="0 0 74 46"><defs><clipPath id="gc"><path d="M3 23 C17 3 57 3 71 23 C57 43 17 43 3 23Z"/></clipPath></defs>
-    <g clip-path="url(#gc)"><rect width="74" height="46" fill="#f4f4f6"/>
-    <g class="gl"><circle cx="37" cy="23" r="12.5" fill="#1d4fd8"/><circle cx="37" cy="23" r="12.5" fill="none" stroke="#061030" stroke-width="1.6"/>
-    <circle cx="37" cy="23" r="5.5" fill="#e0141f"/><circle cx="33" cy="18.5" r="2.2" fill="#fff" opacity=".85"/></g>
-    <rect class="lid" width="74" height="46" fill="#16151c"/></g>
-    <path d="M3 23 C17 3 57 3 71 23 C57 43 17 43 3 23Z" fill="none" stroke="#0b0a10" stroke-width="2"/></svg>`;
+  // each one a different eye: the CBF one, a cat's, a demon's, a bloodshot one, a void, a pixel one
+  const ALMOND = "M3 23 C17 3 57 3 71 23 C57 43 17 43 3 23Z";
+  const EYES = [
+    { sclera: "#f4f4f6", iris: "#1d4fd8", ring: "#061030", pupil: '<circle cx="37" cy="23" r="5.5" fill="#e0141f"/>', r: 12.5 },
+    { sclera: "#c9d93a", iris: "#9fcf2a", ring: "#3c5208", pupil: '<ellipse cx="37" cy="23" rx="2.4" ry="12" fill="#0a0a0a"/>', r: 22 },
+    { sclera: "#2a0508", iris: "#ff2e3b", ring: "#5a0006", pupil: '<circle cx="37" cy="23" r="4.2" fill="#000"/>', r: 12, glow: "#ff2e3b" },
+    { sclera: "#f3e9e6", iris: "#7a4a22", ring: "#2e1a08", pupil: '<circle cx="37" cy="23" r="5" fill="#0a0a0a"/>', r: 11, veins: true },
+    { sclera: "#050507", iris: "#050507", ring: "#050507", pupil: '<circle cx="37" cy="23" r="2.6" fill="#fff"/>', r: 10, glow: "#ffffff" },
+    { pixel: true },
+  ];
+  let ghostN = 0;
+  function ghostSVG() {
+    const e = EYES[(Math.random() * EYES.length) | 0], id = `g${++ghostN}`;
+    if (e.pixel) {
+      // an 8-bit eye made of squares
+      const rows = ["..XXXXXX..", ".XWWWWWWX.", "XWWBBBBWWX", "XWWBRRBWWX", "XWWBBBBWWX", ".XWWWWWWX.", "..XXXXXX.."];
+      const col = { X: "#0b0a10", W: "#eeeef2", B: "#2e6bff", R: "#ff2e3b" };
+      let r = "";
+      rows.forEach((row, y) => [...row].forEach((c, x) => { if (col[c]) r += `<rect x="${7 + x * 6}" y="${2 + y * 6}" width="6" height="6" fill="${col[c]}"/>`; }));
+      return `<svg viewBox="0 0 74 46" shape-rendering="crispEdges"><g class="gl">${r}</g><rect class="lid" x="7" y="2" width="60" height="42" fill="#16151c"/></svg>`;
+    }
+    const veins = e.veins ? '<g stroke="#c0394a" stroke-width=".7" fill="none" opacity=".7"><path d="M4 23 C12 21 16 26 22 22"/><path d="M70 23 C62 25 58 20 52 24"/><path d="M8 30 C14 29 17 33 22 31"/></g>' : "";
+    const glow = e.glow ? `<path d="${ALMOND}" fill="none" stroke="${e.glow}" stroke-width="3" opacity=".55" filter="url(#${id}b)"/>` : "";
+    return `<svg viewBox="0 0 74 46"><defs><clipPath id="${id}"><path d="${ALMOND}"/></clipPath><filter id="${id}b"><feGaussianBlur stdDeviation="2"/></filter></defs>
+      ${glow}<g clip-path="url(#${id})"><rect width="74" height="46" fill="${e.sclera}"/>${veins}
+      <g class="gl"><circle cx="37" cy="23" r="${e.r}" fill="${e.iris}"/><circle cx="37" cy="23" r="${e.r}" fill="none" stroke="${e.ring}" stroke-width="1.6"/>
+      ${e.pupil}<circle cx="${37 - e.r * 0.35}" cy="${23 - e.r * 0.35}" r="2" fill="#fff" opacity=".8"/></g>
+      <rect class="lid" width="74" height="46" fill="#16151c"/></g>
+      <path d="${ALMOND}" fill="none" stroke="#0b0a10" stroke-width="2"/></svg>`;
+  }
   (function ghosts() {
     setTimeout(() => {
       const screens = [...document.querySelectorAll(".screen.stat, .screen.box")].filter((x) => x.offsetParent);
@@ -669,7 +696,7 @@
         const scr = screens[(Math.random() * screens.length) | 0];
         const g = document.createElement("div");
         g.className = "ghost";
-        g.innerHTML = GHOST;
+        g.innerHTML = ghostSVG();
         const sc = 0.7 + Math.random() * 0.9;
         g.style.left = `${Math.random() * Math.max(10, scr.clientWidth - 74 * sc)}px`;
         g.style.top = `${Math.random() * Math.max(10, scr.clientHeight - 46 * sc)}px`;
