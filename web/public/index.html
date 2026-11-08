@@ -4,239 +4,373 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Click Before Frames</title>
-<meta name="description" content="Click Before Frames: who's playing right now.">
+<meta name="description" content="Click Before Frames: players online, devices, versions, levels beaten and the CBF demonlist.">
+<link rel="icon" href="/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0c0a1a;
-    --bg2: #160f2e;
-    --card: rgba(255, 255, 255, 0.05);
-    --card-edge: rgba(190, 160, 255, 0.22);
-    --text: #f1eeff;
-    --muted: #a49fc4;
-    --accent: #a66bff;
-    --accent2: #5fd7ff;
-    --good: #66e09a;
-    --bar: rgba(255, 255, 255, 0.08);
+    --bg: #0a0a0c;
+    --text: #f4f4f8;
+    --muted: #a9abc4;
+    --dim: #7c7f99;
+    --line: rgba(255, 255, 255, 0.10);
+    --glass: rgba(20, 20, 26, 0.62);
+    --blue: #3b4f9e;
+    --blue2: #5065c2;
+    --purple: #5a3a8f;
+    --purple2: #7b4fb8;
+    --grey: #6b6b70;
+    --red: #ff2e3b;
+    --iris: #2e6bff;
+    --card: rgba(77, 92, 168, 0.62);
+    --card2: rgba(88, 74, 160, 0.62);
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; }
-  html { background: var(--bg); }
   [hidden] { display: none !important; }
+  html, body { margin: 0; }
   body {
-    min-height: 100vh;
-    font-family: Poppins, system-ui, sans-serif;
+    background: var(--bg);
     color: var(--text);
-    background: radial-gradient(1200px 700px at 15% -10%, #3a1d78 0%, transparent 60%),
-                radial-gradient(900px 600px at 110% 20%, #123a5a 0%, transparent 55%),
-                linear-gradient(160deg, var(--bg2), var(--bg));
-    background-attachment: fixed;
+    font-family: Inter, system-ui, sans-serif;
+    min-height: 100vh;
     overflow-x: hidden;
   }
-  #stars { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
-  .wrap { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 28px 16px 60px; }
-  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 26px; }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .logo { width: 42px; height: 42px; border-radius: 12px; background: linear-gradient(135deg, var(--accent), var(--accent2));
-          display: grid; place-items: center; font-weight: 800; font-size: 16px; color: #0c0a1a; box-shadow: 0 0 24px rgba(166, 107, 255, .45); }
-  .brand h1 { margin: 0; font-size: 20px; letter-spacing: .3px; }
-  .brand small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
-  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px; font: 600 13px Poppins, sans-serif;
-         color: var(--text); text-decoration: none; border: 1px solid var(--card-edge); background: var(--card); cursor: pointer;
-         transition: transform .15s ease, background .2s ease, box-shadow .2s ease; }
-  .btn:hover { transform: translateY(-1px); background: rgba(255, 255, 255, .09); }
-  .btn.discord { background: #5865f2; border-color: #7983ff; box-shadow: 0 6px 20px rgba(88, 101, 242, .35); }
-  .btn.discord:hover { background: #4752e0; }
-  .me { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
-  .me img { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--card-edge); }
-  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
-  .card { position: relative; padding: 20px 22px; border-radius: 20px; background: var(--card); border: 1px solid var(--card-edge);
-          backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); overflow: hidden;
-          opacity: 0; transform: translateY(14px); animation: rise .6s cubic-bezier(.2, .8, .2, 1) forwards; }
-  .card:nth-child(2) { animation-delay: .07s; } .card:nth-child(3) { animation-delay: .14s; }
-  .grid2 .card { animation-delay: .2s; } .grid2 .card + .card { animation-delay: .27s; }
-  @keyframes rise { to { opacity: 1; transform: none; } }
-  .card.hero { background: linear-gradient(135deg, rgba(166, 107, 255, .32), rgba(95, 215, 255, .10)); }
-  .label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; font-weight: 600; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-  .dot.live { background: var(--good); box-shadow: 0 0 0 0 rgba(102, 224, 154, .7); animation: pulse 2s infinite; }
-  .dot.purple { background: var(--accent); }
-  @keyframes pulse { 70% { box-shadow: 0 0 0 9px rgba(102, 224, 154, 0); } 100% { box-shadow: 0 0 0 0 rgba(102, 224, 154, 0); } }
-  .big { font-size: 46px; font-weight: 800; margin: 6px 0 2px; line-height: 1.1; font-variant-numeric: tabular-nums; }
-  .sub { color: var(--muted); font-size: 12.5px; }
-  .bar { height: 6px; border-radius: 6px; background: var(--bar); margin-top: 14px; overflow: hidden; }
-  .bar > i { display: block; height: 100%; width: 0; border-radius: 6px; background: linear-gradient(90deg, var(--accent), var(--accent2));
-             transition: width 1s cubic-bezier(.2, .8, .2, 1); }
-  h2 { margin: 0; font-size: 17px; }
-  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
-  .head span { color: var(--muted); font-size: 12px; }
-  .row { margin-top: 16px; }
-  .row .top { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; }
-  .row .top > span:last-child { text-align: right; flex-shrink: 0; }
-  .row .top span { color: var(--muted); font-size: 12px; font-weight: 400; }
-  .row .top b { color: var(--text); }
-  .badge { white-space: nowrap; font-style: normal; font-size: 10px; padding: 2px 8px; border-radius: 999px; margin-left: 6px; background: linear-gradient(90deg, var(--accent), #ff6fb0); color: #fff; }
-  .legend { display: flex; gap: 16px; margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .07); color: var(--muted); font-size: 12px; }
-  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
-  .thanks { margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-  .thanks .msg { font-size: 15px; font-weight: 600; }
-  .thanks .msg span { color: var(--muted); font-weight: 400; display: block; font-size: 13px; margin-top: 2px; }
-  .levels { margin-top: 16px; }
-  .levels input { width: 100%; margin-top: 12px; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--card-edge); background: rgba(0, 0, 0, .25);
-                  color: var(--text); font: 14px Poppins, sans-serif; outline: none; }
-  .levels input:focus { border-color: var(--accent); }
-  .lvl-list { margin-top: 10px; max-height: 420px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
-  .lvl { padding: 10px 12px; border-radius: 12px; background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .06); }
-  .lvl b { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .lvl span { color: var(--muted); font-size: 12px; }
-  .empty { color: var(--muted); font-size: 13px; margin-top: 14px; }
-  @media (max-width: 760px) {
-    .grid3, .grid2 { grid-template-columns: 1fr; }
-    .big { font-size: 40px; }
+  #static {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    image-rendering: pixelated; z-index: 0; opacity: 0.55; pointer-events: none;
   }
-  @media (prefers-reduced-motion: reduce) {
-    .card { animation: none; opacity: 1; transform: none; }
-    .dot.live { animation: none; }
+  .vignette {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 40%, transparent 30%, rgba(0, 0, 0, 0.75) 100%);
   }
+  .wrap { position: relative; z-index: 1; max-width: 1440px; margin: 0 auto; padding: 28px 40px 40px; }
+
+  /* top bar */
+  .bar {
+    display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
+    padding: 12px 26px; border: 1px solid var(--line); border-radius: 36px;
+    background: var(--glass); backdrop-filter: blur(6px);
+  }
+  .brand { display: flex; align-items: center; gap: 14px; text-decoration: none; color: var(--text); }
+  .brand img { width: 58px; height: 58px; border-radius: 12px; }
+  .brand h1 { margin: 0; font-family: "Archivo Black", Inter, sans-serif; font-size: clamp(22px, 3.2vw, 44px); letter-spacing: -0.02em; line-height: 1; white-space: nowrap; }
+  nav { display: flex; gap: 10px; margin-left: 12px; }
+  .tab {
+    position: relative; display: inline-flex; align-items: center; gap: 10px;
+    padding: 9px 20px 9px 14px; border-radius: 999px; cursor: pointer;
+    font: 700 clamp(15px, 1.6vw, 22px) Inter, sans-serif; letter-spacing: 0.02em;
+    color: var(--muted); background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--line); transition: color 0.2s, background 0.2s, box-shadow 0.25s, border-color 0.2s;
+  }
+  .tab:hover { color: var(--text); border-color: rgba(46, 107, 255, 0.5); }
+  .tab .iris {
+    width: 18px; height: 18px; border-radius: 50%; flex: none;
+    background: radial-gradient(circle at 50% 50%, #3a0006 0 22%, var(--iris) 24% 58%, #0b1430 62% 100%);
+    box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.7);
+    transition: transform 0.3s;
+  }
+  .tab.active {
+    color: var(--text);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03));
+    border-color: rgba(255, 46, 59, 0.55);
+    box-shadow: 0 0 22px rgba(255, 46, 59, 0.22), inset 0 0 12px rgba(46, 107, 255, 0.18);
+  }
+  .tab.active .iris { background: radial-gradient(circle at 50% 50%, var(--red) 0 24%, var(--iris) 27% 58%, #0b1430 62% 100%); transform: scale(1.12); }
+  .account { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .login { color: var(--text); text-decoration: none; font: italic 600 clamp(16px, 2vw, 30px) Inter, sans-serif; }
+  .login:hover { color: #c9d2ff; }
+  .me { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  .me img { width: 34px; height: 34px; border-radius: 50%; }
+  .me a { color: var(--dim); font-size: 13px; text-decoration: none; }
+
+  /* layout */
+  .grid { display: grid; grid-template-columns: 310px minmax(0, 1fr); gap: 34px; margin-top: 38px; }
+  .side {
+    display: flex; flex-direction: column; gap: 28px; padding: 26px 16px;
+    border: 1px solid var(--line); border-radius: 44px; background: var(--glass);
+  }
+  .stat {
+    position: relative; border-radius: 36px; padding: 18px 26px 20px; min-height: 180px;
+    border: 1px solid rgba(255, 255, 255, 0.12); overflow: hidden;
+  }
+  .stat h3 { margin: 0; font: 400 34px "Space Mono", monospace; letter-spacing: -0.01em; }
+  .num { font: 800 56px Inter, sans-serif; letter-spacing: -0.02em; line-height: 1.1; }
+  .online { background: linear-gradient(160deg, #4a5fb8, #34428e); }
+  .online .row { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+  .online .meter { width: 7px; height: 70px; border-radius: 4px; background: #1d2550; position: relative; overflow: hidden; }
+  .online .meter i { position: absolute; left: 0; right: 0; top: 0; height: 40%; background: #3c7bff; border-radius: 4px; transition: height 0.8s; }
+  .spark { width: 64px; height: 64px; flex: none; animation: twinkle 2.6s ease-in-out infinite; filter: drop-shadow(0 0 8px rgba(53, 220, 90, 0.6)); }
+  @keyframes twinkle { 0%, 100% { transform: scale(1) rotate(0deg); } 50% { transform: scale(0.82) rotate(12deg); } }
+  .offline { background: linear-gradient(160deg, #7a7a80, #5c5c62); }
+  .offline .num { text-align: center; margin-top: 8px; }
+  .offline .mono { font: 400 26px "Space Mono", monospace; color: #c8c8cc; letter-spacing: 0.04em; }
+  .dots::after { content: ""; animation: dots 1.6s steps(4) infinite; }
+  @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+  .players { background: linear-gradient(160deg, #6c45ad, #4d2f86); }
+  .players .row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .players small { font: 400 13px/1.25 "Space Mono", monospace; color: #e4dcf5; text-align: center; }
+
+  .panel {
+    position: relative; border: 1px solid var(--line); border-radius: 50px;
+    background: var(--glass); padding: 34px 28px; min-height: 500px;
+  }
+  .three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(16px, 2.4vw, 40px); height: 100%; }
+  .box {
+    border-radius: 36px; padding: 22px 14px 18px 18px; min-height: 430px;
+    background: linear-gradient(170deg, var(--card), var(--card2));
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  }
+  .box h2 { margin: 0 0 8px 12px; font: 500 clamp(28px, 3vw, 46px) Inter, sans-serif; letter-spacing: -0.01em; }
+  .line { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+  .line:last-child { border-bottom: 0; }
+  .line .k { min-width: 0; font-size: clamp(18px, 1.9vw, 28px); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .line .v { text-align: right; font-size: 14px; color: #e3e6ff; line-height: 1.2; white-space: nowrap; }
+  .line .v span { display: block; color: var(--muted); }
+  .line .v span.by { color: #e3e6ff; font-weight: 600; max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+  .empty { color: var(--muted); padding: 14px 6px; }
+  .scroll { max-height: 400px; overflow-y: auto; padding-right: 6px; }
+  .scroll::-webkit-scrollbar { width: 6px; }
+  .scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 3px; }
+
+  /* demonlist */
+  .hint { position: absolute; top: 18px; right: 52px; color: var(--muted); font-size: 16px; }
+  .demons { display: flex; flex-direction: column; gap: 18px; max-height: 470px; overflow-y: auto; padding: 8px 6px 4px; }
+  .demons::-webkit-scrollbar { width: 6px; }
+  .demons::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 3px; }
+  .demon {
+    display: grid; grid-template-columns: 54px 150px 1fr auto; align-items: center; gap: 16px;
+    padding: 12px 22px 12px 14px; border-radius: 22px; min-height: 146px;
+    background: linear-gradient(180deg, rgba(150, 150, 156, 0.62), rgba(120, 120, 128, 0.58));
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .demon:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 46, 59, 0.35); }
+  .demon .rank { font: 500 38px Inter, sans-serif; }
+  .demon .thumb { width: 150px; height: 116px; border-radius: 10px; object-fit: cover; background: #2b2b30 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.9'/%3E%3C/filter%3E%3Crect width='40' height='40' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E"); }
+  .demon .name { font: 700 38px/1 Inter, sans-serif; letter-spacing: -0.01em; }
+  .demon .meta { font-size: 21px; color: #e6e6ea; margin-top: 2px; }
+  .demon .meta em { font-style: normal; color: #b6b6bd; }
+  .demon .who { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+  .demon .who span { font-size: 21px; }
+  .pfp { width: 86px; height: 86px; border-radius: 50%; object-fit: cover; background: #2f6bff; display: grid; place-items: center; font: 600 28px Inter, sans-serif; }
+  .demon a.video { color: #c9d2ff; font-size: 14px; }
+
+  /* footer */
+  .foot {
+    grid-column: 2; position: relative; display: flex; align-items: flex-end; gap: 24px;
+    padding: 18px 30px 16px; border: 1px solid var(--line); border-radius: 40px; background: var(--glass);
+  }
+  .foot p { margin: 0; color: var(--dim); font-size: clamp(14px, 1.4vw, 21px); line-height: 1.25; flex: 1; min-width: 0; }
+  .join { display: flex; align-items: center; gap: 22px; }
+  .join b { font: 500 30px Inter, sans-serif; white-space: nowrap; }
+  .psst { position: absolute; top: 12px; right: 44px; color: var(--muted); font-size: 18px; }
+  .eye { display: block; width: 180px; height: 112px; cursor: pointer; flex: none; }
+  .eye svg { width: 100%; height: 100%; overflow: visible; }
+
+  @media (max-width: 1150px) {
+    .grid { grid-template-columns: 1fr; }
+    .side { flex-direction: row; flex-wrap: wrap; }
+    .side .stat { flex: 1 1 240px; }
+    .foot { grid-column: 1; }
+    .three { grid-template-columns: 1fr; gap: 22px; }
+    .box { min-height: 0; }
+  }
+  @media (max-width: 700px) {
+    .wrap { padding: 16px; }
+    .bar { padding: 12px 16px; border-radius: 26px; }
+    nav { margin-left: 0; }
+    .account { margin-left: 0; }
+    .panel { padding: 26px 14px; border-radius: 30px; }
+    .demon { grid-template-columns: 40px 1fr; }
+    .demon .thumb { grid-column: 2; width: 100%; height: 140px; }
+    .demon .info, .demon .who { grid-column: 1 / -1; }
+    .demon .who { align-items: flex-start; flex-direction: row; }
+    .demon .name { font-size: 28px; }
+    .foot { flex-direction: column; align-items: flex-start; }
+    .foot p { font-size: 15px; }
+    .hint { position: static; margin: 0 0 10px 6px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .spark, .dots::after { animation: none; } }
 </style>
 </head>
 <body>
-<canvas id="stars"></canvas>
+<canvas id="static" width="240" height="140"></canvas>
+<div class="vignette"></div>
 <div class="wrap">
-  <header>
-    <div class="brand">
-      <div class="logo">CBF</div>
-      <div><h1>Click Before Frames</h1><small>the input buffer for Geometry Dash</small></div>
-    </div>
-    <div class="actions">
-      <a class="btn" id="invite" href="#" target="_blank" rel="noopener" hidden>Join the Discord</a>
-      <span id="account"></span>
-    </div>
+  <header class="bar">
+    <a class="brand" href="/"><img src="/icon.png" alt=""><h1>CLICK BEFORE FRAMES</h1></a>
+    <nav>
+      <button class="tab active" data-tab="stats"><i class="iris"></i>Stats</button>
+      <button class="tab" data-tab="demons"><i class="iris"></i>Demonlist</button>
+    </nav>
+    <div class="account" id="account"><a class="login" href="/auth/login">Log in with discord</a></div>
   </header>
 
-  <section class="card thanks">
-    <div class="msg">💜 Thanks for using Click Before Frames!<span>Every level your autoplay beats helps everyone's autoplay get better.</span></div>
-    <a class="btn discord" id="joinDiscord" href="#" target="_blank" rel="noopener" hidden>Join our Discord</a>
-  </section>
+  <div class="grid">
+    <aside class="side">
+      <div class="stat online">
+        <h3>Online now</h3>
+        <div class="row">
+          <div class="meter"><i id="onlineBar"></i></div>
+          <svg class="spark" viewBox="0 0 64 64" aria-hidden="true"><path d="M32 2 C35 22 42 29 62 32 C42 35 35 42 32 62 C29 42 22 35 2 32 C22 29 29 22 32 2Z" fill="#35d65a"/></svg>
+          <div class="num" id="online">0</div>
+        </div>
+      </div>
+      <div class="stat offline">
+        <h3>Offline</h3>
+        <div class="num" id="offline">0</div>
+        <div class="mono">not playing<span class="dots"></span></div>
+      </div>
+      <div class="stat players">
+        <h3>Players</h3>
+        <div class="row"><div class="num" id="total">0</div><small>If you've ever opened CBF, you're one of them</small></div>
+      </div>
+    </aside>
 
-  <section class="grid3">
-    <div class="card hero">
-      <div class="label"><span class="dot live"></span>Online now</div>
-      <div class="big" id="online">–</div>
-      <div class="sub" id="onlinePct">&nbsp;</div>
-      <div class="bar"><i id="onlineBar"></i></div>
-    </div>
-    <div class="card">
-      <div class="label"><span class="dot"></span>Offline</div>
-      <div class="big" id="offline" style="color: var(--muted)">–</div>
-      <div class="sub">Not playing right now</div>
-    </div>
-    <div class="card">
-      <div class="label"><span class="dot purple"></span>Players</div>
-      <div class="big" id="total">–</div>
-      <div class="sub">Everyone who's ever opened Click Before Frames</div>
-    </div>
-  </section>
+    <section class="panel">
+      <div id="tab-stats" class="three">
+        <div class="box"><h2>Devices</h2><div class="scroll" id="devices"><div class="empty">Loading…</div></div></div>
+        <div class="box"><h2>Versions</h2><div class="scroll" id="versions"><div class="empty">Loading…</div></div></div>
+        <div class="box"><h2>Completions</h2><div class="scroll" id="completions"><div class="empty">Loading…</div></div></div>
+      </div>
+      <div id="tab-demons" hidden>
+        <div class="hint">this is scrollable btw</div>
+        <div class="demons" id="demons"><div class="empty">Loading…</div></div>
+      </div>
+    </section>
 
-  <section class="grid2">
-    <div class="card">
-      <div class="head"><h2>Devices</h2><span id="devCount"></span></div>
-      <div class="sub">Who's playing, by device</div>
-      <div id="devices"></div>
-      <div class="legend"><span><i style="background: var(--good)"></i>Online</span><span><i style="background: var(--muted)"></i>Offline</span></div>
-    </div>
-    <div class="card">
-      <div class="head"><h2>Versions</h2><span id="verCount"></span></div>
-      <div class="sub">Which version this week's players are on</div>
-      <div id="versions"></div>
-    </div>
-  </section>
-
-  <section class="grid2">
-    <div class="card hero">
-      <div class="label"><span class="dot purple"></span>Autoplay brain</div>
-      <div class="big" id="beaten">–</div>
-      <div class="sub">Levels autoplay has beaten from 0% to 100%</div>
-      <div class="sub" id="runs" style="margin-top:8px">&nbsp;</div>
-    </div>
-    <div class="card">
-      <div class="head"><h2>Recently beaten</h2><span>shared runs</span></div>
-      <div class="sub">Every game's autoplay learns these runs</div>
-      <div id="recent"></div>
-    </div>
-  </section>
-
-  <section class="card levels">
-    <div class="head"><h2>Every level beaten by autoplay</h2><span id="lvlCount"></span></div>
-    <div class="sub">All the levels autoplay has finished from 0% to 100% so far</div>
-    <input id="lvlSearch" type="search" placeholder="Search a level name or ID">
-    <div class="lvl-list" id="lvlList"></div>
-  </section>
+    <footer class="foot">
+      <p>Counts are anonymous: each game sends a random id, its device type and version every 90 seconds, and autoplay's finished runs (the level and the button presses, nothing about you). Both can be turned off in the mod's settings.</p>
+      <div class="psst">Psst, i'm clickable!</div>
+      <div class="join">
+        <b>Join the discord:</b>
+        <a class="eye" id="eye" href="https://discord.gg/hSMYGcfcR" target="_blank" rel="noopener" aria-label="Join the Discord">
+          <svg viewBox="0 0 200 124">
+            <defs>
+              <radialGradient id="sclera" cx="50%" cy="46%" r="62%">
+                <stop offset="0" stop-color="#ffffff"/>
+                <stop offset="0.62" stop-color="#eeeef3"/>
+                <stop offset="0.88" stop-color="#cfc9d4"/>
+                <stop offset="1" stop-color="#b79aa6"/>
+              </radialGradient>
+              <radialGradient id="irisG" cx="50%" cy="50%" r="50%">
+                <stop offset="0" stop-color="#0d1a44"/>
+                <stop offset="0.42" stop-color="#1d4fd8"/>
+                <stop offset="0.72" stop-color="#2e6bff"/>
+                <stop offset="0.9" stop-color="#173b9a"/>
+                <stop offset="1" stop-color="#061030"/>
+              </radialGradient>
+              <radialGradient id="pupilG" cx="45%" cy="40%" r="60%">
+                <stop offset="0" stop-color="#ff5a5a"/>
+                <stop offset="0.45" stop-color="#e0141f"/>
+                <stop offset="1" stop-color="#3d0005"/>
+              </radialGradient>
+              <radialGradient id="shade" cx="50%" cy="10%" r="80%">
+                <stop offset="0.55" stop-color="#000" stop-opacity="0"/>
+                <stop offset="1" stop-color="#000" stop-opacity="0.38"/>
+              </radialGradient>
+              <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+              <clipPath id="eyeClip"><path d="M8 62 C46 8 154 8 192 62 C154 116 46 116 8 62Z"/></clipPath>
+            </defs>
+            <path d="M8 62 C46 8 154 8 192 62 C154 116 46 116 8 62Z" fill="#000" opacity="0.35" transform="translate(0 3)"/>
+            <g clip-path="url(#eyeClip)">
+              <rect width="200" height="124" fill="url(#sclera)"/>
+              <g stroke="#c0394a" stroke-width="0.7" fill="none" opacity="0.32">
+                <path d="M10 62 C26 58 34 66 46 60 C52 57 56 60 60 58"/>
+                <path d="M190 62 C176 66 168 58 156 63 C150 66 146 62 140 64"/>
+                <path d="M16 72 C28 70 34 76 44 74"/>
+                <path d="M184 52 C172 54 166 48 158 51"/>
+              </g>
+              <g id="look">
+                <circle cx="100" cy="62" r="34" fill="url(#irisG)"/>
+                <g stroke="#7fa6ff" stroke-width="0.6" opacity="0.35" id="fibers"></g>
+                <circle cx="100" cy="62" r="34" fill="none" stroke="#04091f" stroke-width="2.5" opacity="0.8"/>
+                <circle id="pupil" cx="100" cy="62" r="15" fill="url(#pupilG)" filter="url(#glow)"/>
+                <text x="100" y="66.5" text-anchor="middle" font-family="Inter, sans-serif" font-weight="800" font-size="11" fill="#fff" opacity="0.92">CBF</text>
+                <ellipse cx="88" cy="48" rx="7" ry="4.5" fill="#fff" opacity="0.85" transform="rotate(-25 88 48)"/>
+                <circle cx="114" cy="74" r="2.2" fill="#fff" opacity="0.5"/>
+              </g>
+              <rect width="200" height="124" fill="url(#shade)"/>
+              <rect id="lidTop" x="0" y="0" width="200" height="0" fill="#16151c"/>
+              <rect id="lidBot" x="0" y="124" width="200" height="0" fill="#16151c"/>
+            </g>
+            <path d="M8 62 C46 8 154 8 192 62 C154 116 46 116 8 62Z" fill="none" stroke="#0b0a10" stroke-width="3"/>
+            <path d="M14 50 C52 -2 148 -2 186 50" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="2"/>
+          </svg>
+        </a>
+      </div>
+    </footer>
+  </div>
 </div>
 
 <script>
   const fmt = (n) => Number(n || 0).toLocaleString("en-US");
-  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const BLANK = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
-  // numbers count up to their new value
   function countTo(el, value) {
     const from = Number(el.dataset.v || 0);
     el.dataset.v = value;
+    if (reduce) { el.textContent = fmt(value); return; }
     const start = performance.now();
     const step = (t) => {
       const k = Math.min(1, (t - start) / 700);
-      const e = 1 - Math.pow(1 - k, 3);
-      el.textContent = fmt(Math.round(from + (value - from) * e));
+      el.textContent = fmt(Math.round(from + (value - from) * (1 - Math.pow(1 - k, 3))));
       if (k < 1) requestAnimationFrame(step);
     };
     requestAnimationFrame(step);
   }
-
-  function rows(list, render) {
-    return list.map(render).join("") || '<div class="empty">Nothing yet.</div>';
-  }
+  const list = (items, render) => items.map(render).join("") || '<div class="empty">Nothing yet.</div>';
+  const DEVICE = { windows: "Windows", win: "Windows", mac: "MacOS", macos: "MacOS", android: "Android", android32: "Android", android64: "Android", ios: "iOS" };
 
   async function load() {
     try {
-      const r = await fetch("/api/stats");
-      if (!r.ok) throw new Error();
-      const s = await r.json();
+      const s = await (await fetch("/api/stats")).json();
       countTo(document.getElementById("online"), s.online);
       countTo(document.getElementById("offline"), s.offline);
       countTo(document.getElementById("total"), s.total);
-      const pct = s.total ? (s.online / s.total) * 100 : 0;
-      document.getElementById("onlinePct").textContent = `${pct < 1 && s.online ? "<1" : Math.round(pct)}% of all players`;
-      document.getElementById("onlineBar").style.width = `${Math.max(pct, s.online ? 1.5 : 0)}%`;
-
-      const maxDev = Math.max(1, ...s.platforms.map((p) => p.online + p.offline));
-      document.getElementById("devCount").textContent = `${s.platforms.length} devices`;
-      document.getElementById("devices").innerHTML = rows(s.platforms, (p) => `
-        <div class="row"><div class="top">${esc(p.name)}<span><b>${fmt(p.online)}</b> online · ${fmt(p.offline)} offline</span></div>
-        <div class="bar"><i style="width:${((p.online + p.offline) / maxDev) * 100}%"></i></div></div>`);
-
-      const vTotal = s.versions.reduce((a, v) => a + v.players, 0) || 1;
-      document.getElementById("verCount").textContent = `${s.versions.length} versions`;
-      document.getElementById("versions").innerHTML = rows(s.versions, (v, i) => `
-        <div class="row"><div class="top"><span style="color:var(--text);font-size:14px;font-weight:600">${esc(v.name)}${i === 0 ? '<em class="badge">MOST USED</em>' : ""}</span>
-        <span><b>${fmt(v.players)}</b> player${v.players === 1 ? "" : "s"} · ${Math.round((v.players / vTotal) * 100)}% · ${fmt(v.online)} online</span></div>
-        <div class="bar"><i style="width:${(v.players / vTotal) * 100}%"></i></div></div>`);
-
-      countTo(document.getElementById("beaten"), s.levelsBeaten || 0);
-      document.getElementById("runs").textContent = `${fmt(s.runsShared || 0)} runs shared · ${fmt(s.runsConfirmed || 0)} finishes`;
-      document.getElementById("recent").innerHTML = rows(s.recentBeaten || [], (r) => `
-        <div class="row"><div class="top">${esc(r.name)}<span>id ${r.id} · ${fmt(r.confirms)} finish${r.confirms === 1 ? "" : "es"}</span></div></div>`);
-      const inv = document.getElementById("invite");
-      if (s.discordInvite) {
-        inv.href = s.discordInvite; inv.hidden = false;
-        const j = document.getElementById("joinDiscord"); j.href = s.discordInvite; j.hidden = false;
+      document.getElementById("onlineBar").style.height = `${Math.max(s.total ? (s.online / s.total) * 100 : 0, s.online ? 6 : 0)}%`;
+      const dev = {};
+      for (const p of s.platforms || []) {
+        const n = DEVICE[String(p.name).toLowerCase()] || p.name;
+        dev[n] = dev[n] || { online: 0, total: 0 };
+        dev[n].online += p.online; dev[n].total += p.online + p.offline;
       }
+      document.getElementById("devices").innerHTML = list(Object.entries(dev).sort((a, b) => b[1].total - a[1].total), ([n, d]) =>
+        `<div class="line"><div class="k">${esc(n)}</div><div class="v">${fmt(d.online)} users online<span>${fmt(d.total)} users total</span></div></div>`);
+      document.getElementById("versions").innerHTML = list(s.versions || [], (v) =>
+        `<div class="line"><div class="k">${esc(v.name)}</div><div class="v">${fmt(v.players)} user${v.players === 1 ? "" : "s"} using</div></div>`);
+      const comp = s.completions && s.completions.length ? s.completions : (s.recentBeaten || []).map((r) => ({ name: r.name, by: null }));
+      document.getElementById("completions").innerHTML = list(comp, (c) =>
+        `<div class="line"><div class="k" title="${esc(c.name)}">${esc(c.name)}</div><div class="v">Beaten by:<span class="by">${esc(c.by || "a player")}</span></div></div>`);
+      if (s.discordInvite) document.getElementById("eye").href = s.discordInvite;
+    } catch {}
+  }
 
-    } catch {
-
-    }
+  async function loadDemons() {
+    const box = document.getElementById("demons");
+    try {
+      const r = await (await fetch("/api/demons")).json();
+      box.innerHTML = list(r.demons || [], (d, i) => `
+        <div class="demon">
+          <div class="rank">#${d.position || i + 1}</div>
+          <img class="thumb" src="${Number(d.level_id) ? `https://levelthumbs.prevter.me/thumbnail/${Number(d.level_id)}/small` : BLANK}" alt="" loading="lazy" onerror="this.onerror=null;this.src=BLANK">
+          <div class="info">
+            <div class="name">${esc(d.name)}</div>
+            <div class="meta">By: ${esc(d.creator || "?")} <em>Verified by: ${esc(d.verifier || "?")}</em></div>
+            ${d.video ? `<a class="video" href="${esc(d.video)}" target="_blank" rel="noopener">Watch the run</a>` : ""}
+          </div>
+          <div class="who"><span>Beaten with CBF by: ${esc(d.player || "?")}</span>
+            ${d.avatar ? `<img class="pfp" src="${esc(d.avatar)}" alt="">` : `<div class="pfp">${esc((d.player || "?").slice(0, 1).toUpperCase())}</div>`}
+          </div>
+        </div>`);
+      if (!(r.demons || []).length) box.innerHTML = '<div class="empty">No demons beaten with CBF on the list yet.</div>';
+    } catch { box.innerHTML = '<div class="empty">The demonlist couldn\'t be loaded.</div>'; }
   }
 
   async function account() {
@@ -244,60 +378,93 @@
     try {
       const me = await (await fetch("/api/me")).json();
       if (me) {
-        box.innerHTML = `<span class="me">${me.avatar ? `<img src="${esc(me.avatar)}" alt="">` : ""}${esc(me.name)}</span>
-          <a class="btn" href="/auth/logout">Log out</a>`;
-        return;
+        box.innerHTML = `<span class="me">${me.avatar ? `<img src="${esc(me.avatar)}" alt="">` : ""}${esc(me.name)}
+          ${me.admin ? '<a href="/admin">admin</a>' : ""}<a href="/auth/logout">log out</a></span>`;
       }
     } catch {}
-    box.innerHTML = `<a class="btn discord" href="/auth/login">Log in with Discord</a>`;
   }
 
-  // a slow star field
-  (function stars() {
-    const c = document.getElementById("stars"), g = c.getContext("2d");
-    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let w, h, list = [];
-    const size = () => {
-      w = c.width = innerWidth * devicePixelRatio; h = c.height = innerHeight * devicePixelRatio;
-      c.style.width = innerWidth + "px"; c.style.height = innerHeight + "px";
-      list = Array.from({ length: Math.round((innerWidth * innerHeight) / 9000) }, () => ({
-        x: Math.random() * w, y: Math.random() * h, r: (Math.random() * 1.2 + 0.3) * devicePixelRatio, t: Math.random() * 6.28, s: 0.6 + Math.random() }));
-    };
-    const draw = (time) => {
-      g.clearRect(0, 0, w, h);
-      for (const p of list) {
-        const a = 0.35 + 0.35 * Math.sin(p.t + time / 900 * p.s);
-        g.fillStyle = `rgba(230,225,255,${a})`;
-        g.beginPath(); g.arc(p.x, p.y, p.r, 0, 6.283); g.fill();
+  // tabs
+  for (const t of document.querySelectorAll(".tab")) {
+    t.addEventListener("click", () => {
+      for (const o of document.querySelectorAll(".tab")) o.classList.toggle("active", o === t);
+      document.getElementById("tab-stats").hidden = t.dataset.tab !== "stats";
+      document.getElementById("tab-demons").hidden = t.dataset.tab !== "demons";
+      if (t.dataset.tab === "demons") loadDemons();
+      history.replaceState(null, "", t.dataset.tab === "demons" ? "#demonlist" : "#");
+      blink();
+    });
+  }
+  if (location.hash === "#demonlist") document.querySelector('.tab[data-tab="demons"]').click();
+
+  // animated static
+  (function staticNoise() {
+    const c = document.getElementById("static"), g = c.getContext("2d");
+    const img = g.createImageData(c.width, c.height), d = img.data;
+    let last = 0;
+    const frame = (t) => {
+      if (t - last > 55) {
+        last = t;
+        for (let i = 0; i < d.length; i += 4) {
+          const v = Math.random() < 0.5 ? Math.random() * 38 : Math.random() * 90;
+          d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
+        }
+        g.putImageData(img, 0, 0);
       }
-      if (!reduce) requestAnimationFrame(draw);
+      if (!reduce) requestAnimationFrame(frame);
     };
-    addEventListener("resize", size); size(); requestAnimationFrame(draw);
+    requestAnimationFrame(frame);
   })();
+
+  // the eye: follows the cursor, blinks at random, its red pupil breathes and flares
+  const fibers = document.getElementById("fibers");
+  for (let a = 0; a < 360; a += 9) {
+    const r = (a * Math.PI) / 180;
+    const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    l.setAttribute("x1", 100 + Math.cos(r) * 17); l.setAttribute("y1", 62 + Math.sin(r) * 17);
+    l.setAttribute("x2", 100 + Math.cos(r) * 32); l.setAttribute("y2", 62 + Math.sin(r) * 32);
+    fibers.appendChild(l);
+  }
+  const eye = document.getElementById("eye"), look = document.getElementById("look"), pupil = document.getElementById("pupil");
+  const lidTop = document.getElementById("lidTop"), lidBot = document.getElementById("lidBot");
+  let tx = 0, ty = 0, cx = 0, cy = 0, closed = 0, closing = 0, flare = 0, hover = false;
+  addEventListener("pointermove", (e) => {
+    const r = eye.getBoundingClientRect();
+    const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+    const dist = Math.hypot(dx, dy) || 1, k = Math.min(1, dist / 260);
+    tx = (dx / dist) * 34 * k; ty = (dy / dist) * 16 * k;
+  });
+  eye.addEventListener("pointerenter", () => { hover = true; flare = 1; });
+  eye.addEventListener("pointerleave", () => { hover = false; });
+  function blink(twice) {
+    closing = 1;
+    if (twice) setTimeout(() => (closing = 1), 260);
+  }
+  (function schedule() {
+    setTimeout(() => { blink(Math.random() < 0.25); schedule(); }, 1800 + Math.random() * 4200);
+  })();
+  (function flares() {
+    setTimeout(() => { flare = 1; flares(); }, 2500 + Math.random() * 6000);
+  })();
+  (function tick(t) {
+    cx += (tx - cx) * 0.14; cy += (ty - cy) * 0.14;
+    look.setAttribute("transform", `translate(${cx.toFixed(2)} ${cy.toFixed(2)})`);
+    if (closing) { closed = Math.min(1, closed + 0.32); if (closed >= 1) closing = 0; }
+    else closed = Math.max(0, closed - 0.18);
+    lidTop.setAttribute("height", (closed * 64).toFixed(1));
+    lidBot.setAttribute("y", (124 - closed * 62).toFixed(1));
+    lidBot.setAttribute("height", (closed * 62).toFixed(1));
+    flare = Math.max(0, flare - 0.025);
+    const r = 14 + Math.sin(t / 900) * 1.2 + (hover ? 3 : 0) + flare * 4;
+    pupil.setAttribute("r", r.toFixed(2));
+    pupil.style.filter = `url(#glow) brightness(${1 + flare * 0.8})`;
+    if (!reduce) requestAnimationFrame(tick);
+  })(0);
 
   if (new URLSearchParams(location.search).get("login") === "failed") {
     history.replaceState(null, "", "/");
     alert("Discord login didn't go through. Try again.");
   }
-  let allLevels = [];
-  function showLevels() {
-    const q = document.getElementById("lvlSearch").value.trim().toLowerCase();
-    const list = allLevels.filter((l) => !q || l.name.toLowerCase().includes(q) || String(l.id).includes(q));
-    document.getElementById("lvlList").innerHTML = list.map((l) => `
-      <div class="lvl"><b>${esc(l.name)}</b><span>ID ${l.id} · ${fmt(l.finishes)} finish${l.finishes === 1 ? "" : "es"}</span></div>`).join("")
-      || '<div class="empty">No levels here yet.</div>';
-  }
-  async function loadLevels() {
-    try {
-      const r = await (await fetch("/api/beaten")).json();
-      allLevels = r.levels || [];
-      document.getElementById("lvlCount").textContent = `${fmt(allLevels.length)} levels`;
-      showLevels();
-    } catch {}
-  }
-  document.getElementById("lvlSearch").addEventListener("input", showLevels);
-  loadLevels();
-  setInterval(loadLevels, 120000);
   account();
   load();
   setInterval(load, 30000);
