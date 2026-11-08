@@ -263,12 +263,18 @@
     grid-column: 2; position: relative; display: flex; align-items: flex-end; gap: 24px;
     padding: 18px 30px 16px; border: 1px solid var(--line); border-radius: 40px; background: var(--glass);
   }
-  .foot p { margin: 0; color: var(--dim); font-size: clamp(14px, 1.4vw, 21px); line-height: 1.25; flex: 1; min-width: 0; }
+  .foot p { margin: 0; color: var(--dim); font: 400 clamp(18px, 1.6vw, 25px)/1.05 "VT323", monospace; letter-spacing: 0.02em; flex: 1; min-width: 0;
+    text-shadow: -1px 0 rgba(255, 46, 59, 0.25), 1px 0 rgba(46, 107, 255, 0.25); }
   .join { display: flex; align-items: center; gap: 22px; }
-  .join b { font: 500 30px Inter, sans-serif; white-space: nowrap; }
-  .psst { position: absolute; top: 12px; right: 44px; color: var(--muted); font-size: 18px; }
+  .join b { font: 400 clamp(28px, 2.6vw, 40px) "VT323", monospace; letter-spacing: 0.04em; white-space: nowrap;
+    text-shadow: -1.5px 0 rgba(255, 46, 59, 0.6), 1.5px 0 rgba(46, 107, 255, 0.6), 0 0 10px rgba(190, 205, 255, 0.3);
+    animation: flicker 7s linear infinite 2.1s; }
+  .psst { position: absolute; top: 10px; right: 44px; color: var(--muted); font: 400 22px "VT323", monospace; letter-spacing: 0.05em; }
+  .psst::before { content: "\25CF  "; color: #ff2e3b; text-shadow: 0 0 6px #ff2e3b; animation: led 1.6s ease-in-out infinite; }
   .eye { display: block; width: 180px; height: 112px; cursor: pointer; flex: none; }
-  .eye svg { width: 100%; height: 100%; overflow: visible; }
+  .eye svg { width: 100%; height: 100%; overflow: visible;
+    filter: drop-shadow(-1.5px 0 rgba(255, 46, 59, 0.55)) drop-shadow(1.5px 0 rgba(46, 107, 255, 0.55)); }
+  .eye.glitch svg { transform: translateX(var(--gx, 0px)) skewX(var(--gs, 0deg)); }
 
   @media (max-width: 1150px) {
     .grid { grid-template-columns: 1fr; }
@@ -303,10 +309,10 @@
     .demon .meta, .demon .who span { font-size: 16px; }
     .pfp { width: 48px; height: 48px; font-size: 20px; }
     .foot { flex-direction: column; align-items: flex-start; border-radius: 30px; padding: 18px; }
-    .foot p { font-size: 14px; }
-    .psst { position: static; order: -1; font-size: 14px; }
+    .foot p { font-size: 17px; }
+    .psst { position: static; order: -1; font-size: 18px; }
     .join { gap: 12px; flex-wrap: wrap; }
-    .join b { font-size: 20px; }
+    .join b { font-size: 26px; }
     .eye { width: 130px; height: 81px; }
     .hint { position: static; margin: 0 0 10px 6px; }
   }
@@ -363,9 +369,9 @@
 
     <footer class="foot">
       <p>Counts are anonymous: each game sends a random id, its device type and version every 90 seconds, and autoplay's finished runs (the level and the button presses, nothing about you). Both can be turned off in the mod's settings.</p>
-      <div class="psst">Psst, i'm clickable!</div>
+      <div class="psst">PSST, I'M CLICKABLE!</div>
       <div class="join">
-        <b>Join the discord:</b>
+        <b>JOIN THE DISCORD:</b>
         <a class="eye" id="eye" href="https://discord.gg/hSMYGcfcR" target="_blank" rel="noopener" aria-label="Join the Discord">
           <svg viewBox="0 0 200 124">
             <defs>
@@ -394,6 +400,11 @@
               <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
               <linearGradient id="lidG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2530"/><stop offset="1" stop-color="#121016"/></linearGradient>
               <linearGradient id="lidG2" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#2a2530"/><stop offset="1" stop-color="#16131b"/></linearGradient>
+              <filter id="eyeSnow" x="0" y="0" width="100%" height="100%">
+                <feTurbulence id="eyeTurb" type="fractalNoise" baseFrequency="0.95" numOctaves="1" seed="1"/>
+                <feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 2.2 -0.95"/>
+              </filter>
+              <pattern id="eyeScan" width="4" height="3" patternUnits="userSpaceOnUse"><rect width="4" height="1" fill="#000" opacity="0.45"/></pattern>
               <clipPath id="eyeClip"><path d="M8 62 C46 8 154 8 192 62 C154 116 46 116 8 62Z"/></clipPath>
             </defs>
             <path d="M8 62 C46 8 154 8 192 62 C154 116 46 116 8 62Z" fill="#000" opacity="0.35" transform="translate(0 3)"/>
@@ -415,6 +426,8 @@
                 <circle cx="114" cy="74" r="2.2" fill="#fff" opacity="0.5"/>
               </g>
               <rect width="200" height="124" fill="url(#shade)"/>
+              <rect width="200" height="124" filter="url(#eyeSnow)" opacity="0.32" style="mix-blend-mode: overlay"/>
+              <rect width="200" height="124" fill="url(#eyeScan)" opacity="0.6"/>
               <path id="lidTop" fill="url(#lidG)"/>
               <path id="lidBot" fill="url(#lidG2)"/>
               <path id="lash" fill="none" stroke="#050408" stroke-width="3" stroke-linecap="round"/>
@@ -599,6 +612,24 @@
   }
   (function schedule() {
     setTimeout(() => { blink(Math.random() < 0.25); schedule(); }, 1800 + Math.random() * 4200);
+  })();
+  // the eye's snow moves, and now and then the picture jumps sideways for a moment
+  const turb = document.getElementById("eyeTurb");
+  let seed = 1;
+  if (!reduce) setInterval(() => { seed = (seed % 97) + 1; turb.setAttribute("seed", seed); }, 70);
+  (function glitches() {
+    setTimeout(() => {
+      if (!reduce) {
+        let n = 0;
+        const jolt = setInterval(() => {
+          eye.classList.add("glitch");
+          eye.style.setProperty("--gx", `${(Math.random() * 10 - 5).toFixed(1)}px`);
+          eye.style.setProperty("--gs", `${(Math.random() * 10 - 5).toFixed(1)}deg`);
+          if (++n > 4) { clearInterval(jolt); eye.classList.remove("glitch"); }
+        }, 45);
+      }
+      glitches();
+    }, 3000 + Math.random() * 6000);
   })();
   (function flares() {
     setTimeout(() => { flare = 1; flares(); }, 2500 + Math.random() * 6000);
