@@ -6014,6 +6014,7 @@ namespace online {
 
     struct OnlineMacro {
         std::string file, url, author, notes;
+        std::string source = "Hyperbolus";  // alpha.29: or MacroDash
         bool approved = false;
         int downloads = 0;
     };
@@ -6054,13 +6055,17 @@ namespace online {
             return;
         }
         onlineMacroTried.insert(levelId);
-        say("autoplay: looking for a macro of this level on Hyperbolus...");
+        say("autoplay: looking for a macro of this level on Hyperbolus and MacroDash...");
         std::filesystem::path dir = macroDir();
+        std::string levelName;
+        if (auto* pl = GameManager::get()->m_playLayer; pl && pl->m_level && pl->m_level->m_levelID.value() == levelId) {
+            levelName = pl->m_level->m_levelName;
+        }
         // alpha.18: your TPS (the setting); a macro at another one is played at its own (Macro Plays At Its TPS)
         double tps = static_cast<double>(std::max<int64_t>(240, Mod::get()->getSettingValue<int64_t>("tps")));
         bool autoTps = Mod::get()->getSettingValue<bool>("macro-auto-tps");
         std::string bad = "|" + Mod::get()->getSavedValue<std::string>(fmt::format("macro-bad2-{}", levelId), "") + "|";  // alpha.6: a new list (macros dropped before for another TPS are tried again)
-        std::thread([levelId, dir, tps, bad, autoTps] {
+        std::thread([levelId, dir, tps, bad, autoTps, levelName] {
             auto tell = [](std::string msg) { queueInMainThread([msg] { say("{}", msg); }); };
             std::vector<OnlineMacro> list;
             int last = 1;
@@ -6082,7 +6087,7 @@ namespace online {
                 }
                 if (!data) {
                     if (page == 1) {
-                        return tell("autoplay: Hyperbolus has no macros of this level (or couldn't be reached)");
+                        tell("autoplay: Hyperbolus has no macros of this level (or couldn't be reached)");
                     }
                     break;
                 }
@@ -6114,8 +6119,49 @@ namespace online {
                     }
                 }
             }
+            // alpha.29: MacroDash (a collection of hard demons' macros on GitHub), by the level's name; the
+            // file's own level id is checked when it's read
+            if (!levelName.empty()) {
+                auto norm = [](std::string const& v) {
+                    std::string out;
+                    for (unsigned char c : v) {
+                        if (std::isalnum(c)) {
+                            out += static_cast<char>(std::tolower(c));
+                        }
+                    }
+                    return out;
+                };
+                std::string want = norm(levelName);
+                std::string base = "https://raw.githubusercontent.com/downupstudio/macrodash/main/";
+                auto idx = web::WebRequest().timeout(std::chrono::seconds(15)).userAgent("ClickBeforeFrames").getSync(base + "macros-data.js");
+                if (idx.ok() && !want.empty()) {
+                    std::string js = idx.string().unwrapOr("");
+                    auto field = [](std::string const& chunk, std::string const& key) -> std::string {
+                        auto k = chunk.find(key + ":");
+                        if (k == std::string::npos) {
+                            return "";
+                        }
+                        auto q1 = chunk.find('"', k);
+                        auto q2 = q1 == std::string::npos ? q1 : chunk.find('"', q1 + 1);
+                        return q2 == std::string::npos ? "" : chunk.substr(q1 + 1, q2 - q1 - 1);
+                    };
+                    for (size_t at = js.find("title:"); at != std::string::npos;) {
+                        size_t next = js.find("title:", at + 6);
+                        std::string chunk = js.substr(at, next == std::string::npos ? std::string::npos : next - at);
+                        std::string title = field(chunk, "title"), path = field(chunk, "gdr");
+                        if (norm(title) == want && path.rfind("macros/", 0) == 0 && path.find("..") == std::string::npos) {
+                            OnlineMacro o;
+                            o.source = "MacroDash";
+                            o.file = path.substr(7);
+                            o.url = base + path;
+                            list.push_back(std::move(o));
+                        }
+                        at = next;
+                    }
+                }
+            }
             if (list.empty()) {
-                return tell("autoplay: Hyperbolus has no GDR macro of this level it can use");
+                return tell("autoplay: neither Hyperbolus nor MacroDash has a GDR macro of this level it can use");
             }
             std::stable_sort(list.begin(), list.end(), [](OnlineMacro const& a, OnlineMacro const& b) {
                 if (a.approved != b.approved) {
@@ -6192,15 +6238,16 @@ namespace online {
                 if (best.m.author.empty()) {
                     best.m.author = best.o.author;
                 }
-                std::string credit = fmt::format("{} by {} (Hyperbolus, GD {:.4f})", best.o.file, best.o.author.empty() ? best.m.author : best.o.author,
-                    best.m.gameVersion);
+                std::string credit = fmt::format("{} by {} ({}, GD {:.4f})", best.o.file, best.o.author.empty() ? best.m.author : best.o.author,
+                    best.o.source, best.m.gameVersion);
+                std::string source = best.o.source;
                 std::string url = best.o.url;
                 size_t usable = picks.size();
                 Macro got = std::move(best.m);
-                queueInMainThread([got, credit, levelId, url, usable] {
+                queueInMainThread([got, credit, levelId, url, usable, source] {
                     Mod::get()->setSavedValue(fmt::format("macro-src-{}", levelId), url + "\n" + credit);
                     auto* layer = GameManager::get()->m_playLayer;
-                    say("autoplay: downloaded {} from Hyperbolus ({} of its macros fit your TPS)", credit, usable);
+                    say("autoplay: downloaded {} from {} ({} macro{} found fit your TPS)", credit, source, usable, usable == 1 ? "" : "s");
                     if (!autoplay.active || !layer || !layer->m_level || layer->m_level->m_levelID.value() != levelId) {
                         return;
                     }
