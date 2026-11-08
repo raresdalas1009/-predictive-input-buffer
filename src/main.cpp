@@ -6012,9 +6012,13 @@ namespace online {
     // the next attempt. Off with the "Online Macros" setting.
     std::set<int> onlineMacroTried;
 
+    // alpha.30: Click Before Frames' Astral converter (web/astral-converter)
+    constexpr char const* ASTRAL_CONVERTER = "https://cbf-astral.j6m7hh99sg.workers.dev";
+
     struct OnlineMacro {
         std::string file, url, author, notes;
-        std::string source = "Hyperbolus";  // alpha.29: or MacroDash
+        std::string source = "Hyperbolus";  // alpha.29: or MacroDash; alpha.30: or Astral
+        double gameVersion = 0.0;  // alpha.30: as the site says (Astral's converted files don't carry it)
         bool approved = false;
         int downloads = 0;
     };
@@ -6055,7 +6059,7 @@ namespace online {
             return;
         }
         onlineMacroTried.insert(levelId);
-        say("autoplay: looking for a macro of this level on Hyperbolus and MacroDash...");
+        say("autoplay: looking for a macro of this level on Hyperbolus, MacroDash and Astral...");
         std::filesystem::path dir = macroDir();
         std::string levelName;
         if (auto* pl = GameManager::get()->m_playLayer; pl && pl->m_level && pl->m_level->m_levelID.value() == levelId) {
@@ -6160,8 +6164,48 @@ namespace online {
                     }
                 }
             }
+            // alpha.30: Astral's macro database (its own .ast format: converted to GDR by Click Before
+            // Frames' converter, with Astral's own converter, used with the Astral developer's permission)
+            if (!levelName.empty()) {
+                std::string q;
+                for (unsigned char c : levelName) {
+                    if (std::isalnum(c) || c == '-' || c == '_' || c == '.') {
+                        q += static_cast<char>(c);
+                    }
+                    else {
+                        q += fmt::format("%{:02X}", c);
+                    }
+                }
+                auto res = web::WebRequest().timeout(std::chrono::seconds(15)).userAgent("ClickBeforeFrames")
+                    .getSync(fmt::format("https://astral-api.gwddos.workers.dev/api/macros?page=1&limit=50&search={}", q));
+                if (res.ok()) {
+                    if (auto j = res.json(); j.isOk() && j.unwrap()["macros"].isArray()) {
+                        for (auto const& it : j.unwrap()["macros"]) {
+                            std::string id = it["level_id"].isString() ? it["level_id"].asString().unwrapOr("") : std::to_string(it["level_id"].asInt().unwrapOr(0));
+                            std::string fileName = it["file_name"].asString().unwrapOr("");
+                            if (id != std::to_string(levelId) || fileName.empty() || !fileName.ends_with(".ast")) {
+                                continue;
+                            }
+                            bool okName = fileName.size() < 120 && fileName.find("..") == std::string::npos &&
+                                std::all_of(fileName.begin(), fileName.end(), [](unsigned char c) { return std::isalnum(c) || c == '_' || c == '.' || c == '-'; });
+                            if (!okName) {
+                                continue;
+                            }
+                            OnlineMacro o;
+                            o.source = "Astral";
+                            o.file = fileName;
+                            o.url = std::string(ASTRAL_CONVERTER) + "/convert?file=" + fileName;
+                            o.author = it["macro_author"].isString() ? it["macro_author"].asString().unwrapOr("") : "";
+                            o.notes = it["description"].isString() ? it["description"].asString().unwrapOr("") : "";
+                            o.downloads = it["downloads"].isNumber() ? static_cast<int>(it["downloads"].asInt().unwrapOr(0)) : 0;
+                            o.gameVersion = std::atof(it["game_version"].asString().unwrapOr("0").c_str());
+                            list.push_back(std::move(o));
+                        }
+                    }
+                }
+            }
             if (list.empty()) {
-                return tell("autoplay: neither Hyperbolus nor MacroDash has a GDR macro of this level it can use");
+                return tell("autoplay: Hyperbolus, MacroDash and Astral have no macro of this level it can use");
             }
             std::stable_sort(list.begin(), list.end(), [](OnlineMacro const& a, OnlineMacro const& b) {
                 if (a.approved != b.approved) {
@@ -6195,6 +6239,15 @@ namespace online {
                 std::vector<uint8_t> data(bytes.begin(), bytes.end());
                 std::string why;
                 auto m = parseMacro(data, o.file, why);
+                if (m && o.source == "Astral") {
+                    // its converted file has a placeholder level id and GD version: the site's are used
+                    m->levelId = levelId;
+                    if (o.gameVersion > 0.0) {
+                        m->gameVersion = o.gameVersion;
+                    }
+                    m->author = o.author;
+                    m->bot = "Astral";
+                }
                 if (m && (m->levelId == 0 || m->levelId == levelId) && std::abs(m->fps - tps) > 0.5 && m->fixes.size() < 100 &&
                     !(autoTps && m->fps >= 239.5 && m->fps <= 1000.5)) {
                     ++otherTps[static_cast<int>(std::lround(m->fps))];

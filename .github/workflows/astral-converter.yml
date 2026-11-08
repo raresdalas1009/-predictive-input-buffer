@@ -1,0 +1,23 @@
+name: Deploy Astral converter
+
+# Deploys web/astral-converter (the cbf-astral Cloudflare Worker) with wrangler.
+# Needs two repository secrets: CLOUDFLARE_API_TOKEN (a token made from the
+# "Edit Cloudflare Workers" template) and CLOUDFLARE_ACCOUNT_ID.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "web/astral-converter/**"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: web/astral-converter
+          wranglerVersion: "3.114.17"
