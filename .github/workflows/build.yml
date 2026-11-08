@@ -33,6 +33,9 @@ jobs:
           cli: latest
           combine: true
           target: ${{ matrix.config.target }}
+          # GitHub's cache service was returning broken archives (Nov 2026 outage): built without it
+          ccache-variant: ''
+          use-cpm-cache: false
       - name: Show compile errors
         if: failure()
         shell: bash
