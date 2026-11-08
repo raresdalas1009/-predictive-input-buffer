@@ -180,18 +180,35 @@
     .box { min-height: 0; }
   }
   @media (max-width: 700px) {
-    .wrap { padding: 16px; }
-    .bar { padding: 12px 16px; border-radius: 26px; }
+    .wrap { padding: 14px; }
+    .bar { padding: 12px 16px; border-radius: 26px; gap: 12px; }
+    .brand img { width: 40px; height: 40px; }
     nav { margin-left: 0; }
     .account { margin-left: 0; }
-    .panel { padding: 26px 14px; border-radius: 30px; }
-    .demon { grid-template-columns: 40px 1fr; }
-    .demon .thumb { grid-column: 2; width: 100%; height: 140px; }
-    .demon .info, .demon .who { grid-column: 1 / -1; }
-    .demon .who { align-items: flex-start; flex-direction: row; }
-    .demon .name { font-size: 28px; }
-    .foot { flex-direction: column; align-items: flex-start; }
-    .foot p { font-size: 15px; }
+    .grid { margin-top: 18px; gap: 18px; }
+    .side { flex-direction: column; padding: 14px; border-radius: 30px; gap: 14px; }
+    .side .stat { flex: none; min-height: 0; }
+    .stat h3 { font-size: 26px; }
+    .num { font-size: 44px; }
+    .panel { padding: 22px 12px; border-radius: 30px; min-height: 0; }
+    .demons { max-height: none; }
+    .demon {
+      grid-template-columns: 44px 1fr; grid-template-areas: "rank thumb" "info info" "who who";
+      min-height: 0; padding: 12px; gap: 10px;
+    }
+    .demon .rank { grid-area: rank; font-size: 28px; }
+    .demon .thumb { grid-area: thumb; width: 100%; height: 130px; }
+    .demon .info { grid-area: info; }
+    .demon .who { grid-area: who; flex-direction: row-reverse; justify-content: flex-end; align-items: center; text-align: left; }
+    .demon .name { font-size: 26px; }
+    .demon .meta, .demon .who span { font-size: 16px; }
+    .pfp { width: 48px; height: 48px; font-size: 20px; }
+    .foot { flex-direction: column; align-items: flex-start; border-radius: 30px; padding: 18px; }
+    .foot p { font-size: 14px; }
+    .psst { position: static; order: -1; font-size: 14px; }
+    .join { gap: 12px; flex-wrap: wrap; }
+    .join b { font-size: 20px; }
+    .eye { width: 130px; height: 81px; }
     .hint { position: static; margin: 0 0 10px 6px; }
   }
   @media (prefers-reduced-motion: reduce) { .spark, .dots::after { animation: none; } }
