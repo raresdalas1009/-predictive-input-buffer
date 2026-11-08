@@ -9,6 +9,7 @@ on:
     branches: [main, v3-test]
     paths:
       - "web/astral-converter/**"
+      - ".github/workflows/astral-converter.yml"
 
 jobs:
   deploy:
