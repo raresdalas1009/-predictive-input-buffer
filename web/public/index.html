@@ -8,7 +8,7 @@
 <link rel="icon" href="/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=VT323&family=Inter:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #0a0a0c;
@@ -100,15 +100,62 @@
   /* layout */
   .grid { display: grid; grid-template-columns: 310px minmax(0, 1fr); gap: 34px; margin-top: 38px; }
   .side {
-    display: flex; flex-direction: column; gap: 28px; padding: 26px 16px;
+    display: flex; flex-direction: column; gap: 20px; padding: 22px 16px;
     border: 1px solid var(--line); border-radius: 44px; background: var(--glass);
   }
-  .stat {
-    position: relative; border-radius: 36px; padding: 18px 26px 20px; min-height: 180px;
-    border: 1px solid rgba(255, 255, 255, 0.12); overflow: hidden;
+  /* v3.2: every box is an old TV: a plastic case, a curved glass screen with scan lines, snow
+     and a glare, and a chin with two knobs, a speaker grille and a red power light */
+  .tv {
+    position: relative; display: flex; flex-direction: column;
+    padding: 12px 12px 0; border-radius: 30px;
+    background: linear-gradient(180deg, #34323b 0%, #222027 55%, #18171c 100%);
+    box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.10), inset 0 -3px 0 rgba(0, 0, 0, 0.5),
+      0 14px 28px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.6);
   }
-  .stat h3 { margin: 0; font: 400 34px "Space Mono", monospace; letter-spacing: -0.01em; }
-  .num { font: 800 56px Inter, sans-serif; letter-spacing: -0.02em; line-height: 1.1; }
+  .tv::before { /* the case's moulding around the screen */
+    content: ""; position: absolute; inset: 7px 7px 37px; border-radius: 26px; pointer-events: none;
+    box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.55), inset 0 0 0 3px rgba(255, 255, 255, 0.05);
+  }
+  .screen {
+    position: relative; overflow: hidden; isolation: isolate;
+    border-radius: 24px / 30px;
+    box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.65), inset 0 0 6px rgba(0, 0, 0, 0.9);
+    text-shadow: 0 0 6px rgba(200, 215, 255, 0.35);
+  }
+  .screen::before { /* scan lines and snow */
+    content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none; mix-blend-mode: overlay; opacity: 0.55;
+    background:
+      repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.35) 0 1px, transparent 1px 3px),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='1'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+    animation: snow 0.4s steps(4) infinite;
+  }
+  @keyframes snow { 0% { background-position: 0 0, 0 0; } 25% { background-position: 0 1px, -40px 30px; } 50% { background-position: 0 0, 60px -50px; } 75% { background-position: 0 2px, -70px -20px; } 100% { background-position: 0 0, 20px 60px; } }
+  .screen::after { /* the curved glass: a glare at the top left, darker edges */
+    content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none; border-radius: inherit;
+    background:
+      radial-gradient(120% 70% at 22% 0%, rgba(255, 255, 255, 0.13), transparent 45%),
+      radial-gradient(140% 120% at 50% 50%, transparent 58%, rgba(0, 0, 0, 0.45) 100%);
+  }
+  .screen > * { position: relative; z-index: 1; }
+  .chin { height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 14px; flex: none; }
+  .knob {
+    width: 15px; height: 15px; border-radius: 50%; flex: none;
+    background: radial-gradient(circle at 35% 30%, #77737f, #2c2a31 60%, #141317);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.8), inset 0 -1px 1px rgba(0, 0, 0, 0.6);
+    position: relative;
+  }
+  .knob::after { content: ""; position: absolute; left: 6.5px; top: 2px; width: 2px; height: 5px; border-radius: 1px; background: #c9c5d2; opacity: 0.7; }
+  .knob + .knob::after { transform: rotate(48deg); transform-origin: 1px 5.5px; }
+  .grille { flex: 1; height: 12px; border-radius: 3px; background: repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.65) 0 2px, rgba(255, 255, 255, 0.05) 2px 5px); }
+  .brand-tag { font: 400 14px "VT323", monospace; color: #8e8a98; letter-spacing: 0.12em; }
+  .led { width: 7px; height: 7px; border-radius: 50%; background: #ff2e3b; box-shadow: 0 0 6px #ff2e3b, 0 0 12px rgba(255, 46, 59, 0.6); animation: led 3.2s ease-in-out infinite; }
+  @keyframes led { 0%, 100% { opacity: 1; } 45% { opacity: 0.55; } 50% { opacity: 1; } }
+
+  .stat {
+    padding: 14px 22px 16px; height: 168px;
+  }
+  .stat h3 { margin: 0; font: 400 40px/1 "VT323", monospace; letter-spacing: 0.02em; }
+  .num { font: 800 54px Inter, sans-serif; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
   .online { background: linear-gradient(160deg, #4a5fb8, #34428e); }
   .online .row { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
   .online .meter { width: 7px; height: 70px; border-radius: 4px; background: #1d2550; position: relative; overflow: hidden; }
@@ -116,34 +163,32 @@
   .spark { width: 64px; height: 64px; flex: none; animation: twinkle 2.6s ease-in-out infinite; filter: drop-shadow(0 0 8px rgba(53, 220, 90, 0.6)); }
   @keyframes twinkle { 0%, 100% { transform: scale(1) rotate(0deg); } 50% { transform: scale(0.82) rotate(12deg); } }
   .offline { background: linear-gradient(160deg, #7a7a80, #5c5c62); }
-  .offline .num { text-align: center; margin-top: 8px; }
-  .offline .mono { font: 400 26px "Space Mono", monospace; color: #c8c8cc; letter-spacing: 0.04em; }
+  .offline .num { text-align: center; margin-top: 4px; }
+  .offline .mono { font: 400 30px "VT323", monospace; color: #c8c8cc; letter-spacing: 0.04em; }
   .dots::after { content: ""; animation: dots 1.6s steps(4) infinite; }
   @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
   .players { background: linear-gradient(160deg, #6c45ad, #4d2f86); }
-  .players .row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
-  .players small { font: 400 13px/1.25 "Space Mono", monospace; color: #e4dcf5; text-align: center; }
+  .players .row { display: flex; flex-direction: column; align-items: flex-start; gap: 0; margin-top: 2px; }
+  .players small { font: 400 17px/1.1 "VT323", monospace; color: #e4dcf5; }
 
   .panel {
     position: relative; border: 1px solid var(--line); border-radius: 50px;
-    background: var(--glass); padding: 34px 28px; min-height: 500px;
+    background: var(--glass); padding: 34px 28px;
   }
-  .three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(16px, 2.4vw, 40px); height: 100%; }
+  .three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(14px, 2vw, 30px); align-items: start; }
   .box {
-    border-radius: 36px; padding: 22px 14px 18px 18px; min-height: 430px;
+    padding: 16px 14px 14px 18px; height: 600px; display: flex; flex-direction: column;
     background: linear-gradient(170deg, var(--card), var(--card2));
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   }
-  .box h2 { margin: 0 0 8px 12px; font: 500 clamp(28px, 3vw, 46px) Inter, sans-serif; letter-spacing: -0.01em; }
+  .box h2 { margin: 0 0 6px 4px; font: 400 clamp(34px, 3.4vw, 52px)/1 "VT323", monospace; letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
   .line { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
   .line:last-child { border-bottom: 0; }
-  .line .k { min-width: 0; font-size: clamp(18px, 1.9vw, 28px); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .line .k { min-width: 0; font-size: clamp(16px, 1.6vw, 25px); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .line .v { text-align: right; font-size: 14px; color: #e3e6ff; line-height: 1.2; white-space: nowrap; }
   .line .v span { display: block; color: var(--muted); }
   .line .v span.by { color: #e3e6ff; font-weight: 600; max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
   .empty { color: var(--muted); padding: 14px 6px; }
-  .scroll { max-height: 400px; overflow-y: auto; padding-right: 6px; }
+  .scroll { flex: 1; min-height: 0; overflow-y: auto; padding-right: 6px; scrollbar-gutter: stable; }
   .scroll::-webkit-scrollbar { width: 6px; }
   .scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 3px; }
 
@@ -185,10 +230,10 @@
   @media (max-width: 1150px) {
     .grid { grid-template-columns: 1fr; }
     .side { flex-direction: row; flex-wrap: wrap; }
-    .side .stat { flex: 1 1 240px; }
+    .side .tv { flex: 1 1 240px; }
     .foot { grid-column: 1; }
     .three { grid-template-columns: 1fr; gap: 22px; }
-    .box { min-height: 0; }
+    .box { height: auto; max-height: 360px; }
   }
   @media (max-width: 700px) {
     .wrap { padding: 14px; }
@@ -198,7 +243,7 @@
     .account { margin-left: 0; }
     .grid { margin-top: 18px; gap: 18px; }
     .side { flex-direction: column; padding: 14px; border-radius: 30px; gap: 14px; }
-    .side .stat { flex: none; min-height: 0; }
+    .side .tv { flex: none; }
     .stat h3 { font-size: 26px; }
     .num { font-size: 44px; }
     .panel { padding: 22px 12px; border-radius: 30px; min-height: 0; }
@@ -222,7 +267,7 @@
     .eye { width: 130px; height: 81px; }
     .hint { position: static; margin: 0 0 10px 6px; }
   }
-  @media (prefers-reduced-motion: reduce) { .spark, .dots::after, .roll { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .spark, .dots::after, .roll, .screen::before, .led { animation: none; } }
 </style>
 </head>
 <body>
@@ -242,30 +287,30 @@
 
   <div class="grid">
     <aside class="side">
-      <div class="stat online">
+      <div class="tv"><div class="screen stat online">
         <h3>Online now</h3>
         <div class="row">
           <div class="meter"><i id="onlineBar"></i></div>
           <svg class="spark" viewBox="0 0 64 64" aria-hidden="true"><path d="M32 2 C35 22 42 29 62 32 C42 35 35 42 32 62 C29 42 22 35 2 32 C22 29 29 22 32 2Z" fill="#35d65a"/></svg>
           <div class="num" id="online">0</div>
         </div>
-      </div>
-      <div class="stat offline">
+      </div><div class="chin"><i class="knob"></i><i class="knob"></i><span class="grille"></span><span class="brand-tag">CBF</span><i class="led"></i></div></div>
+      <div class="tv"><div class="screen stat offline">
         <h3>Offline</h3>
         <div class="num" id="offline">0</div>
         <div class="mono">not playing<span class="dots"></span></div>
-      </div>
-      <div class="stat players">
+      </div><div class="chin"><i class="knob"></i><i class="knob"></i><span class="grille"></span><span class="brand-tag">CBF</span><i class="led"></i></div></div>
+      <div class="tv"><div class="screen stat players">
         <h3>Players</h3>
         <div class="row"><div class="num" id="total">0</div><small>If you've ever opened CBF, you're one of them</small></div>
-      </div>
+      </div><div class="chin"><i class="knob"></i><i class="knob"></i><span class="grille"></span><span class="brand-tag">CBF</span><i class="led"></i></div></div>
     </aside>
 
     <section class="panel">
       <div id="tab-stats" class="three">
-        <div class="box"><h2>Devices</h2><div class="scroll" id="devices"><div class="empty">Loading…</div></div></div>
-        <div class="box"><h2>Versions</h2><div class="scroll" id="versions"><div class="empty">Loading…</div></div></div>
-        <div class="box"><h2>Completions</h2><div class="scroll" id="completions"><div class="empty">Loading…</div></div></div>
+        <div class="tv"><div class="screen box"><h2>Devices</h2><div class="scroll" id="devices"><div class="empty">Loading…</div></div></div><div class="chin"><i class="knob"></i><i class="knob"></i><span class="grille"></span><span class="brand-tag">CBF</span><i class="led"></i></div></div>
+        <div class="tv"><div class="screen box"><h2>Versions</h2><div class="scroll" id="versions"><div class="empty">Loading…</div></div></div><div class="chin"><i class="knob"></i><i class="knob"></i><span class="grille"></span><span class="brand-tag">CBF</span><i class="led"></i></div></div>
+        <div class="tv"><div class="screen box"><h2>Completions</h2><div class="scroll" id="completions"><div class="empty">Loading…</div></div></div><div class="chin"><i class="knob"></i><i class="knob"></i><span class="grille"></span><span class="brand-tag">CBF</span><i class="led"></i></div></div>
       </div>
       <div id="tab-demons" hidden>
         <div class="hint">this is scrollable btw</div>
