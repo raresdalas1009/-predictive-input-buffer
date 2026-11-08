@@ -10582,14 +10582,14 @@ public:
             auto list = listMacroChoices(level, name, print, tps);
             queueInMainThread([alive, list, this] {
                 if (*alive) {
-                    show(list);
+                    showList(list);
                 }
             });
         }).detach();
         return true;
     }
 
-    void show(std::vector<MacroChoice> const& list) {
+    void showList(std::vector<MacroChoice> const& list) {
         m_list = list;
         if (m_list.empty()) {
             m_status->setString("No site has a macro of this level.");
