@@ -10929,12 +10929,18 @@ private:
         d->drawPolygon(pts.data(), static_cast<unsigned>(pts.size()), fill, border, borderColor);
     }
 
+    // v3.2: the website's pixel TV font (VT323) in the dark look; Exo 2 / Orbitron in the light one
+    static inline bool s_siteFont = true;
     static char const* bodyFont() {
-        return "exo2.fnt"_spr;
+        return s_siteFont ? "vt323.fnt"_spr : "exo2.fnt"_spr;
     }
 
     static char const* headFont() {
-        return "orbitron.fnt"_spr;
+        return s_siteFont ? "vt323.fnt"_spr : "orbitron.fnt"_spr;
+    }
+
+    static float fontK() {
+        return s_siteFont ? 1.25f : 1.f;  // VT323's letters are smaller for the same size
     }
 
     static constexpr float HEAD_K = 0.8f;  // Orbitron is wide
@@ -10942,7 +10948,7 @@ private:
     CCLabelBMFont* label(CCNode* parent, std::string const& str, float scale, ccColor3B color, CCPoint at, CCPoint anchor = { 0.5f, 0.5f },
         bool head = false) {
         auto* l = CCLabelBMFont::create(str.c_str(), head ? headFont() : bodyFont());
-        l->setScale(scale * (head ? HEAD_K : 1.f));
+        l->setScale(scale * (head && !s_siteFont ? HEAD_K : 1.f) * fontK());
         l->setColor(color);
         l->setAnchorPoint(anchor);
         l->setPosition(at);
@@ -10951,7 +10957,7 @@ private:
     }
 
     ccColor4F cardFill() const {
-        return m_light ? col({ 255, 255, 255 }, 0.55f) : col({ 255, 255, 255 }, 0.045f);
+        return m_light ? col({ 255, 255, 255 }, 0.55f) : col({ 44, 44, 52 }, 0.78f);
     }
 
     // a pill button: filled with the accent (primary), or glassy with an accent edge
@@ -10969,10 +10975,10 @@ private:
         }
         node->addChild(d);
         auto* l = CCLabelBMFont::create(str.c_str(), bodyFont());
-        l->setScale(0.5f);
+        l->setScale(0.5f * fontK());
         l->setColor(primary ? ccColor3B { 255, 255, 255 } : m_text);
         l->setPosition({ width / 2.f, height / 2.f + 0.5f });
-        l->limitLabelWidth(width - 8.f, 0.5f, 0.2f);
+        l->limitLabelWidth(width - 8.f, 0.5f * fontK(), 0.2f);
         node->addChild(l);
         auto* item = CCMenuItemSpriteExtra::create(node, this, handler);
         item->m_scaleMultiplier = 1.05f;
@@ -11053,7 +11059,24 @@ private:
     // a translucent card with a title in its top left corner
     void card(CCRect r, std::string const& title = "", std::string const& right = "") {
         auto* d = CCDrawNode::create();
-        roundRect(d, r, 9.f, cardFill(), 0.6f, col(m_t.main, m_light ? 0.45f : 0.35f));
+        if (m_light) {
+            roundRect(d, r, 9.f, cardFill(), 0.6f, col(m_t.main, 0.45f));
+        }
+        else {
+            // v3.2: an old TV like on the website: a dark case, a grey screen inside with scan lines,
+            // a soft glare at the top and a red power light in the corner
+            roundRect(d, { r.origin.x - 1.5f, r.origin.y - 1.5f, r.size.width + 3.f, r.size.height + 3.f }, 10.5f, col({ 22, 21, 26 }, 0.97f), 0.6f,
+                col({ 255, 255, 255 }, 0.08f));
+            CCRect in { r.origin.x + 2.f, r.origin.y + 2.f, r.size.width - 4.f, r.size.height - 4.f };
+            roundRect(d, in, 8.f, col({ 50, 51, 58 }, 0.92f), 0.5f, col({ 0, 0, 0 }, 0.7f));
+            for (float y = in.getMinY() + 2.f; y < in.getMaxY() - 2.f; y += 3.f) {
+                d->drawSegment({ in.getMinX() + 3.f, y }, { in.getMaxX() - 3.f, y }, 0.3f, { 0.f, 0.f, 0.f, 0.22f });
+            }
+            roundRect(d, { in.getMinX() + 3.f, in.getMaxY() - std::min(14.f, in.size.height * 0.3f), in.size.width * 0.55f,
+                              std::min(11.f, in.size.height * 0.25f) }, 5.f, col({ 255, 255, 255 }, 0.035f));
+            circle(d, { r.getMaxX() - 5.f, r.getMinY() + 5.f }, 1.6f, col({ 255, 46, 59 }, 0.95f), 10);
+            circle(d, { r.getMaxX() - 5.f, r.getMinY() + 5.f }, 3.2f, col({ 255, 46, 59 }, 0.25f), 12);
+        }
         m_page->addChild(d, 1);
         if (!title.empty()) {
             label(m_page, title, 0.5f, m_text, { r.getMinX() + 9.f, r.getMaxY() - 10.f }, { 0.f, 0.5f });
@@ -11366,7 +11389,7 @@ private:
         roundRect(cd, { 0.f, 0.f, cw, 16.f }, 8.f, cardFill(), 0.6f, col(m_t.main, 0.8f));
         cnode->addChild(cd);
         m_chip = CCLabelBMFont::create(chip.c_str(), headFont());
-        m_chip->setScale(0.32f);
+        m_chip->setScale(s_siteFont ? 0.42f : 0.32f);
         m_chip->setColor(m_text);
         m_chip->setPosition({ cw / 2.f, 8.5f });
         cnode->addChild(m_chip);
@@ -11399,8 +11422,8 @@ private:
             circle(d, { 10.f, th / 2.f }, 2.2f, active ? col(m_t.soft, 1.f) : col(m_muted, 0.7f), 14);
             node->addChild(d);
             auto* l = CCLabelBMFont::create(TABS[i], bodyFont());
-            l->setScale(0.56f);
-            l->limitLabelWidth(tw - 26.f, 0.56f, 0.2f);
+            l->setScale(0.56f * fontK());
+            l->limitLabelWidth(tw - 26.f, 0.56f * fontK(), 0.2f);
             l->setColor(active ? m_text : m_muted);
             l->setAnchorPoint({ 0.f, 0.5f });
             l->setPosition({ 19.f, th / 2.f + 0.5f });
@@ -11935,6 +11958,7 @@ private:
     void applyLook() {
         m_t = currentTheme();
         m_light = Mod::get()->getSavedValue<bool>("ui-light", false);
+        s_siteFont = !m_light;
         m_bg = Mod::get()->getSavedValue<int>("ui-bg", 0);
         if (m_light) {
             m_text = { 34, 28, 56 };

@@ -6,7 +6,7 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"version": "v3.2.0-alpha.1",
+	"version": "v3.2.0-alpha.2",
 	"id": "basu.input-buffer",
 	"name": "Click Before Frames",
 	"developer": "BASU",
@@ -542,6 +542,10 @@
 			},
 			"exo2": {
 				"path": "resources/fonts/Exo2.ttf",
+				"size": 64
+			},
+			"vt323": {
+				"path": "resources/fonts/VT323.ttf",
 				"size": 64
 			}
 		}
