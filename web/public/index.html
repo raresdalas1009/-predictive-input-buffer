@@ -137,6 +137,14 @@
       radial-gradient(140% 120% at 50% 50%, transparent 58%, rgba(0, 0, 0, 0.45) 100%);
   }
   .screen > * { position: relative; z-index: 1; }
+  /* everything on a screen in the TV font */
+  .screen, .screen * { font-family: "VT323", monospace !important; font-weight: 400 !important; letter-spacing: 0.02em; }
+  .screen .num { font-size: 70px; line-height: 0.95; letter-spacing: 0.01em; }
+  .screen .line, .screen .line * { letter-spacing: 0 !important; }
+  .screen .line .k { font-size: clamp(24px, 2.2vw, 34px); }
+  .screen .line .v { font-size: 19px; line-height: 1.05; }
+  .screen .line .v span.by { font-size: 19px; }
+  .screen .empty { font-size: 22px; }
   .chin { height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 14px; flex: none; }
   .knob {
     width: 15px; height: 15px; border-radius: 50%; flex: none;
