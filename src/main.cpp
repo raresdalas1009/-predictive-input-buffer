@@ -11284,8 +11284,8 @@ private:
             // v3.2: dark: a switched-off TV (black screen, a dot of light); light: a TV with a white screen
             auto tv = [&](CCPoint c, bool on) {
                 ccColor4F body = col({ 255, 255, 255 }, 0.95f), dark = col({ 14, 13, 18 }, 1.f);
-                roundRect(d, { c.x - 7.f, c.y - 4.6f, 14.f, 9.2f }, 2.2f, body);
-                roundRect(d, { c.x - 5.6f, c.y - 3.3f, 9.4f, 6.6f }, 1.6f, on ? col({ 255, 255, 255 }, 1.f) : dark, 0.5f, dark);
+                roundRect(d, { c.x - 7.f, c.y - 4.6f, 14.f, 9.2f }, 2.2f, col({ 34, 32, 40 }, 1.f), 0.55f, body);
+                roundRect(d, { c.x - 5.6f, c.y - 3.3f, 9.4f, 6.6f }, 1.6f, on ? col({ 255, 255, 255 }, 1.f) : dark, 0.35f, col({ 0, 0, 0 }, 1.f));
                 if (on) {
                     for (float y = c.y - 2.6f; y < c.y + 3.f; y += 1.4f) {
                         d->drawSegment({ c.x - 5.f, y }, { c.x + 3.2f, y }, 0.2f, col({ 170, 170, 185 }, 0.6f));
@@ -11294,8 +11294,8 @@ private:
                 else {
                     circle(d, { c.x - 0.9f, c.y }, 0.6f, col({ 255, 255, 255 }, 0.9f), 8);
                 }
-                circle(d, { c.x + 5.3f, c.y + 1.4f }, 0.7f, dark, 8);
-                circle(d, { c.x + 5.3f, c.y - 1.2f }, 0.7f, on ? col({ 255, 46, 59 }, 1.f) : dark, 8);
+                circle(d, { c.x + 5.3f, c.y + 1.4f }, 0.7f, col({ 200, 200, 210 }, 1.f), 8);
+                circle(d, { c.x + 5.3f, c.y - 1.2f }, 0.7f, on ? col({ 255, 46, 59 }, 1.f) : col({ 90, 90, 100 }, 1.f), 8);
                 d->drawSegment({ c.x - 1.5f, c.y + 4.6f }, { c.x - 4.f, c.y + 7.2f }, 0.35f, body);
                 d->drawSegment({ c.x + 1.5f, c.y + 4.6f }, { c.x + 4.f, c.y + 7.2f }, 0.35f, body);
             };
@@ -11346,13 +11346,14 @@ private:
         auto* node = CCNode::create();
         node->setContentSize({ 12.f, 12.f });
         auto* d = CCDrawNode::create();
-        float w = picked ? 12.5f : 11.f, h = picked ? 4.4f : 3.4f;
+        // (almond's height is its curves' pull: the eye is about 0.65 of it tall each way)
+        float w = picked ? 13.f : 11.f, h = picked ? 6.6f : 5.6f;
         auto shape = almond(w, h);
         for (auto& p : shape) {
             p = p + CCPoint { 6.f, 6.f };
         }
         if (picked) {
-            auto ring = almond(w + 3.f, h + 1.6f);
+            auto ring = almond(w + 3.f, h + 2.4f);
             for (auto& p : ring) {
                 p = p + CCPoint { 6.f, 6.f };
             }
@@ -11360,7 +11361,7 @@ private:
                 { 0, 0, 0, 0 });
         }
         d->drawPolygon(shape.data(), static_cast<unsigned>(shape.size()), { 0.95f, 0.95f, 0.96f, 1.f }, 0.5f, { 0.05f, 0.05f, 0.07f, 1.f });
-        float r = picked ? 3.6f : 3.f;
+        float r = picked ? 3.1f : 2.6f;
         circle(d, { 6.f, 6.f }, r, col(c, 1.f), 18);
         circle(d, { 6.f, 6.f }, r * 0.42f, col({ 8, 8, 10 }, 1.f), 12);
         circle(d, { 5.f, 7.f }, r * 0.25f, col({ 255, 255, 255 }, 0.85f), 8);
