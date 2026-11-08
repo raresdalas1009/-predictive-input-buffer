@@ -11063,8 +11063,7 @@ private:
             roundRect(d, r, 9.f, cardFill(), 0.6f, col(m_t.main, 0.45f));
         }
         else {
-            // v3.2: an old TV like on the website: a dark case, a grey screen inside with scan lines,
-            // a soft glare at the top and a red power light in the corner
+            // v3.2: an old TV like on the website: a dark case, a grey screen inside with scan lines
             roundRect(d, { r.origin.x - 1.5f, r.origin.y - 1.5f, r.size.width + 3.f, r.size.height + 3.f }, 10.5f, col({ 22, 21, 26 }, 0.97f), 0.6f,
                 col({ 255, 255, 255 }, 0.08f));
             CCRect in { r.origin.x + 2.f, r.origin.y + 2.f, r.size.width - 4.f, r.size.height - 4.f };
@@ -11072,10 +11071,6 @@ private:
             for (float y = in.getMinY() + 2.f; y < in.getMaxY() - 2.f; y += 3.f) {
                 d->drawSegment({ in.getMinX() + 3.f, y }, { in.getMaxX() - 3.f, y }, 0.3f, { 0.f, 0.f, 0.f, 0.22f });
             }
-            roundRect(d, { in.getMinX() + 3.f, in.getMaxY() - std::min(14.f, in.size.height * 0.3f), in.size.width * 0.55f,
-                              std::min(11.f, in.size.height * 0.25f) }, 5.f, col({ 255, 255, 255 }, 0.035f));
-            circle(d, { r.getMaxX() - 5.f, r.getMinY() + 5.f }, 1.6f, col({ 255, 46, 59 }, 0.95f), 10);
-            circle(d, { r.getMaxX() - 5.f, r.getMinY() + 5.f }, 3.2f, col({ 255, 46, 59 }, 0.25f), 12);
         }
         m_page->addChild(d, 1);
         if (!title.empty()) {
@@ -11286,17 +11281,26 @@ private:
             auto* d = CCDrawNode::create();
             roundRect(d, { 0.f, 0.f, bw, 16.f }, 8.f, m_light ? col({ 200, 196, 215 }, 0.8f) : col({ 0, 0, 0 }, 0.35f), 0.5f, col(m_t.main, 0.5f));
             roundRect(d, { m_light ? bw / 2.f : 0.f, 0.f, bw / 2.f, 16.f }, 8.f, col(m_t.main, 0.95f));
-            // moon: a circle with a bite out of it
-            circle(d, { bw * 0.25f, 8.f }, 4.f, col({ 255, 255, 255 }, 1.f), 20);
-            circle(d, { bw * 0.25f + 2.f, 9.5f }, 3.4f, m_light ? col({ 200, 196, 215 }, 1.f) : col(m_t.main, 1.f), 20);
-            // sun: a dot with rays
-            CCPoint sc { bw * 0.75f, 8.f };
-            circle(d, sc, 2.4f, col({ 255, 255, 255 }, 1.f), 16);
-            for (int i = 0; i < 8; ++i) {
-                float an = i * 3.14159265f / 4.f;
-                d->drawSegment(sc + CCPoint { 3.6f * std::cos(an), 3.6f * std::sin(an) }, sc + CCPoint { 5.f * std::cos(an), 5.f * std::sin(an) }, 0.45f,
-                    col({ 255, 255, 255 }, 0.95f));
-            }
+            // v3.2: dark: a switched-off TV (black screen, a dot of light); light: a TV with a white screen
+            auto tv = [&](CCPoint c, bool on) {
+                ccColor4F body = col({ 255, 255, 255 }, 0.95f), dark = col({ 14, 13, 18 }, 1.f);
+                roundRect(d, { c.x - 7.f, c.y - 4.6f, 14.f, 9.2f }, 2.2f, body);
+                roundRect(d, { c.x - 5.6f, c.y - 3.3f, 9.4f, 6.6f }, 1.6f, on ? col({ 255, 255, 255 }, 1.f) : dark, 0.5f, dark);
+                if (on) {
+                    for (float y = c.y - 2.6f; y < c.y + 3.f; y += 1.4f) {
+                        d->drawSegment({ c.x - 5.f, y }, { c.x + 3.2f, y }, 0.2f, col({ 170, 170, 185 }, 0.6f));
+                    }
+                }
+                else {
+                    circle(d, { c.x - 0.9f, c.y }, 0.6f, col({ 255, 255, 255 }, 0.9f), 8);
+                }
+                circle(d, { c.x + 5.3f, c.y + 1.4f }, 0.7f, dark, 8);
+                circle(d, { c.x + 5.3f, c.y - 1.2f }, 0.7f, on ? col({ 255, 46, 59 }, 1.f) : dark, 8);
+                d->drawSegment({ c.x - 1.5f, c.y + 4.6f }, { c.x - 4.f, c.y + 7.2f }, 0.35f, body);
+                d->drawSegment({ c.x + 1.5f, c.y + 4.6f }, { c.x + 4.f, c.y + 7.2f }, 0.35f, body);
+            };
+            tv({ bw * 0.25f, 7.f }, false);
+            tv({ bw * 0.75f, 7.f }, true);
             node->addChild(d);
             auto* item = CCMenuItemSpriteExtra::create(node, this, menu_selector(BufferMenu::onLight));
             item->m_scaleMultiplier = 1.04f;
@@ -11337,18 +11341,32 @@ private:
         }
     }
 
+    // v3.2: each colour is an eye with that colour as its iris; the picked one is wide open and ringed
     void dot(CCPoint at, ccColor3B c, bool picked, bool plus, SEL_MenuHandler handler, int tag) {
         auto* node = CCNode::create();
         node->setContentSize({ 12.f, 12.f });
         auto* d = CCDrawNode::create();
-        if (picked) {
-            circle(d, { 6.f, 6.f }, 6.f, col(m_light ? ccColor3B { 40, 30, 60 } : ccColor3B { 255, 255, 255 }, 0.95f), 24);
+        float w = picked ? 12.5f : 11.f, h = picked ? 4.4f : 3.4f;
+        auto shape = almond(w, h);
+        for (auto& p : shape) {
+            p = p + CCPoint { 6.f, 6.f };
         }
-        circle(d, { 6.f, 6.f }, 4.6f, col(c, 1.f), 24);
-        circle(d, { 4.6f, 7.4f }, 1.6f, col({ 255, 255, 255 }, 0.35f), 12);
+        if (picked) {
+            auto ring = almond(w + 3.f, h + 1.6f);
+            for (auto& p : ring) {
+                p = p + CCPoint { 6.f, 6.f };
+            }
+            d->drawPolygon(ring.data(), static_cast<unsigned>(ring.size()), col(m_light ? ccColor3B { 40, 30, 60 } : ccColor3B { 255, 255, 255 }, 0.9f), 0.f,
+                { 0, 0, 0, 0 });
+        }
+        d->drawPolygon(shape.data(), static_cast<unsigned>(shape.size()), { 0.95f, 0.95f, 0.96f, 1.f }, 0.5f, { 0.05f, 0.05f, 0.07f, 1.f });
+        float r = picked ? 3.6f : 3.f;
+        circle(d, { 6.f, 6.f }, r, col(c, 1.f), 18);
+        circle(d, { 6.f, 6.f }, r * 0.42f, col({ 8, 8, 10 }, 1.f), 12);
+        circle(d, { 5.f, 7.f }, r * 0.25f, col({ 255, 255, 255 }, 0.85f), 8);
         if (plus) {
-            d->drawSegment({ 3.6f, 6.f }, { 8.4f, 6.f }, 0.55f, col({ 255, 255, 255 }, 1.f));
-            d->drawSegment({ 6.f, 3.6f }, { 6.f, 8.4f }, 0.55f, col({ 255, 255, 255 }, 1.f));
+            d->drawSegment({ 4.2f, 6.f }, { 7.8f, 6.f }, 0.5f, col({ 255, 255, 255 }, 1.f));
+            d->drawSegment({ 6.f, 4.2f }, { 6.f, 7.8f }, 0.5f, col({ 255, 255, 255 }, 1.f));
         }
         node->addChild(d);
         auto* item = CCMenuItemSpriteExtra::create(node, this, handler);
