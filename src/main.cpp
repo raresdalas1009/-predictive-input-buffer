@@ -5661,8 +5661,10 @@ namespace online {
         autoplay.brainKey.clear();
         autoplay.brainReported = false;
         // alpha.31: a macro the player picked (not the brain's run): straight to it
+        // v3.2: a level the global brain has a run of always plays that run, even over a macro you
+        // picked (Choose Macro); your pick is played when the brain has none, or its run fails here
         auto pick = Mod::get()->getSavedValue<std::string>(fmt::format("macro-pick-{}", id), "");
-        if (!pick.empty() && pick != "brain") {
+        if (!pick.empty() && pick != "brain" && (std::string_view(online::URL).empty() || !Mod::get()->getSettingValue<bool>("global-brain"))) {
             loadLocalMacro(layer);
             return;
         }
