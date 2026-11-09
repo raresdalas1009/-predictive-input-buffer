@@ -12470,10 +12470,20 @@ public:
 
     static BufferMenu* create() {
         // v3.2: the menu starts at half size once (the UI Scale buttons still go from 0.4x to 1.3x)
+        // (v3.2.1: on Android the menu stays at normal size: half size was too small on a phone;
+        // those who got 0.5x from v3.2.0 are set back to 1x once)
+#ifdef GEODE_IS_ANDROID
+        if (!Mod::get()->getSavedValue<bool>("ui-v321-android", false)) {
+            Mod::get()->setSavedValue("ui-scale", 1.f);
+            Mod::get()->setSavedValue("ui-v321-android", true);
+            Mod::get()->setSavedValue("ui-v32-scale", true);
+        }
+#else
         if (!Mod::get()->getSavedValue<bool>("ui-v32-scale", false)) {
             Mod::get()->setSavedValue("ui-scale", 0.5f);
             Mod::get()->setSavedValue("ui-v32-scale", true);
         }
+#endif
         auto* ret = new BufferMenu();
         if (ret->init()) {
             ret->autorelease();
