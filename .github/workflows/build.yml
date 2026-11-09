@@ -51,33 +51,4 @@ jobs:
         with:
           name: Build Output
           path: ${{ steps.build.outputs.build-output }}
-  release:
-    name: Publish release
-    runs-on: ubuntu-latest
-    needs: ['package']
-    if: github.ref == 'refs/heads/main'
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: Build Output
-          path: out
-      - name: Create the release for a new version
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION=$(jq -r .version mod.json)
-          if gh release view "$VERSION" >/dev/null 2>&1; then
-            echo "Release $VERSION already exists"
-            exit 0
-          fi
-          FILE=$(find out -name '*.geode' | head -n 1)
-          if [ -z "$FILE" ]; then
-            echo "No .geode in the build output"
-            exit 1
-          fi
-          cp "$FILE" basu.input-buffer.geode
-          NOTES=$(tail -n 1 README.md)
-          gh release create "$VERSION" basu.input-buffer.geode --title "Click Before Frames $VERSION" --notes "$NOTES"
+# (no GitHub releases from v3.2.0 on: new versions are uploaded on the site's /admin page)
