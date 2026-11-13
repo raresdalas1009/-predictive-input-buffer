@@ -10490,6 +10490,10 @@ namespace online {
     // v3.2.2 alternate click: in at its tick (let go first if the button is down, press on the
     // next one), held for your usual hold but at most half the gap, then back to your button
     void stepAltClick(PlayLayer* layer, PlayerObject* player) {
+        // wave and ship only: left them (a portal) before it went in: no extra click
+        if (buf.altAt >= 0 && !player->m_isDart && !player->m_isShip) {
+            buf.altAt = -1;
+        }
         if (!buf.altClick || player->m_isDead) {
             if (buf.altActive) {
                 buf.altActive = false;
@@ -10546,7 +10550,7 @@ namespace online {
         if (!buf.shipBuffer && (player->m_isShip || (dual && layer->m_player2->m_isShip))) {
             resetPending();
             buf.autoReleased = false;
-            if (buf.appliedInput != buf.realInput) {
+            if (buf.appliedInput != buf.realInput && !buf.altActive) {
                 sendButton(layer, buf.realInput);
             }
             return;
@@ -14100,7 +14104,9 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
             recordRealInput(down, p1);
             // v3.2.2: your press gets its alternate click 1/CPS later (one at a time: a new press
             // moves it)
-            if (down && buf.enabled && buf.altClick && !autoplay.active && p1 && !p1->m_isDead && !this->m_isPlatformer) {
+            // (v3.2.2-alpha.2: wave and ship only)
+            bool altMode = p1 && (p1->m_isDart || p1->m_isShip);
+            if (down && buf.enabled && buf.altClick && altMode && !autoplay.active && !p1->m_isDead && !this->m_isPlatformer) {
                 buf.altAt = tickCount + std::max(1, st(240 / std::max(2, buf.altCps)));
                 buf.altPressAt = buf.altReleaseAt = -1;
             }

@@ -6,7 +6,7 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"version": "v3.2.2-alpha.1",
+	"version": "v3.2.2-alpha.2",
 	"id": "basu.input-buffer",
 	"name": "Click Before Frames",
 	"developer": "BASU",
@@ -192,7 +192,7 @@
 		"alt-click": {
 			"type": "bool",
 			"name": "Alternate Click",
-			"description": "Each press of yours gets a second click a moment later, like a second finger alternating with you: press at half the speed and you get the full CPS. The gap comes from Alternate Click CPS (8 CPS: the extra click 1/8 s after yours). The extra clicks aren't yours, so AUTO INPUTS ON shows on screen while it's on; runs with it aren't legit.",
+			"description": "In wave and ship, each press of yours gets a second click a moment later, like a second finger alternating with you: press at half the speed and you get the full CPS. The gap comes from Alternate Click CPS (8 CPS: the extra click 1/8 s after yours). The extra clicks aren't yours, so AUTO INPUTS ON shows on screen while it's on; runs with it aren't legit.",
 			"default": false
 		},
 		"alt-click-cps": {
