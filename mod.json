@@ -6,7 +6,7 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"version": "v3.2.1",
+	"version": "v3.2.2-alpha.1",
 	"id": "basu.input-buffer",
 	"name": "Click Before Frames",
 	"developer": "BASU",
@@ -188,6 +188,27 @@
 			"name": "Auto-click (clicks for you)",
 			"description": "When you're not holding and doing nothing would crash within the auto-release window, but a click right now (with your usual hold) is fully safe, the mod clicks for you. Your own click, if it still comes, is ignored. Cube, ball, UFO, robot, spider and swing (not wave / ship). Practice mode only, unless 'Auto-release in normal runs' is on; then AUTO INPUTS ON shows on screen. Runs with this aren't legit.",
 			"default": false
+		},
+		"alt-click": {
+			"type": "bool",
+			"name": "Alternate Click",
+			"description": "Each press of yours gets a second click a moment later, like a second finger alternating with you: press at half the speed and you get the full CPS. The gap comes from Alternate Click CPS (8 CPS: the extra click 1/8 s after yours). The extra clicks aren't yours, so AUTO INPUTS ON shows on screen while it's on; runs with it aren't legit.",
+			"default": false
+		},
+		"alt-click-cps": {
+			"type": "int",
+			"name": "Alternate Click CPS",
+			"description": "The click speed the alternate click aims for: its extra click comes 1/CPS of a second after each of your presses (4 CPS: 0.25 s later, 5: 0.2 s, 8: 0.125 s).",
+			"default": 8,
+			"min": 2,
+			"max": 30,
+			"control": {
+				"slider": true,
+				"slider-step": 1,
+				"input": true,
+				"arrows": true,
+				"arrow-step": 1
+			}
 		},
 		"level-memory": {
 			"type": "bool",

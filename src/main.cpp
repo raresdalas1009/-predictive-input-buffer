@@ -231,6 +231,14 @@ namespace {
         bool autoReleased = false;   // v2.4: we released for you; your real release is swallowed
         bool autoClick = false;      // v2.80: click for you at the last moment when you didn't
         bool autoClicked = false;    // v2.80: we clicked for you; your own late click is swallowed
+        // v3.2.2 alternate click: each press of yours gets a second click 1/CPS later, like a
+        // second finger alternating with you (setting: Alternate Click, Alternate Click CPS)
+        bool altClick = false;
+        int altCps = 8;
+        int altAt = -1;          // tick the extra click goes in
+        int altPressAt = -1;     // (held at that moment: let go first, press on the next tick)
+        int altReleaseAt = -1;   // tick it lets go
+        bool altActive = false;  // the extra click is in: the game isn't put back to your button
         int autoClickTick = 0;       // v2.80: when that was
         PlayLayer* owner = nullptr;  // v2.86: the level the mod has set up (null while one loads)
         int spamGap = 16;            // v2.5.2: inputs closer than this (ticks) count toward wave spam
@@ -722,6 +730,8 @@ namespace {
         buf.avoidMovers = mod->getSettingValue<bool>("avoid-moving-objects");
         buf.autoRelease = mod->getSettingValue<bool>("wave-auto-release");
         buf.autoClick = mod->getSettingValue<bool>("auto-click");
+        buf.altClick = mod->getSettingValue<bool>("alt-click");
+        buf.altCps = static_cast<int>(std::clamp<int64_t>(mod->getSettingValue<int64_t>("alt-click-cps"), 2, 30));
         buf.autoWindow = static_cast<int>(mod->getSettingValue<int64_t>("auto-release-window"));
         buf.driftCheck = mod->getSettingValue<bool>("drift-check");
         buf.spamGap = static_cast<int>(mod->getSettingValue<int64_t>("wave-spam-gap"));
@@ -878,8 +888,9 @@ namespace {
             return;
         }
         auto* layer = GameManager::get()->m_playLayer;
-        bool on = buf.enabled && buf.autoNormalRuns && (buf.autoRelease || buf.robotAutoRelease || buf.dashAutoRelease || buf.autoClick) &&
-            layer && !layer->m_isPracticeMode;
+        bool on = (buf.enabled && buf.autoNormalRuns && (buf.autoRelease || buf.robotAutoRelease || buf.dashAutoRelease || buf.autoClick) &&
+                      layer && !layer->m_isPracticeMode) ||
+            (buf.enabled && buf.altClick && layer);  // v3.2.2: the extra clicks aren't yours: always shown
         buf.autoTag->setVisible(on);
     }
 
@@ -984,6 +995,8 @@ namespace {
         buf.rapid = 0;
         buf.autoReleased = false;
         buf.autoClicked = false;
+        buf.altAt = buf.altPressAt = buf.altReleaseAt = -1;
+        buf.altActive = false;
         buf.recordPath = nullptr;
         watched.clear();
         forgetMoveTriggers();
@@ -10474,10 +10487,51 @@ namespace online {
         }
     }
 
+    // v3.2.2 alternate click: in at its tick (let go first if the button is down, press on the
+    // next one), held for your usual hold but at most half the gap, then back to your button
+    void stepAltClick(PlayLayer* layer, PlayerObject* player) {
+        if (!buf.altClick || player->m_isDead) {
+            if (buf.altActive) {
+                buf.altActive = false;
+                buf.altAt = buf.altPressAt = buf.altReleaseAt = -1;
+            }
+            return;
+        }
+        int gap = std::max(2, st(240 / std::max(2, buf.altCps)));
+        auto pressNow = [&] {
+            sendButton(layer, true);
+            buf.altActive = true;
+            buf.altReleaseAt = tickCount + std::clamp(holdEstimate(), 1, std::max(1, gap / 2));
+        };
+        if (buf.altAt >= 0 && tickCount >= buf.altAt) {
+            buf.altAt = -1;
+            if (buf.appliedInput) {
+                sendButton(layer, false);
+                buf.altActive = true;
+                buf.altPressAt = tickCount + 1;
+            }
+            else {
+                pressNow();
+            }
+        }
+        else if (buf.altPressAt >= 0 && tickCount >= buf.altPressAt) {
+            buf.altPressAt = -1;
+            pressNow();
+        }
+        else if (buf.altReleaseAt >= 0 && tickCount >= buf.altReleaseAt) {
+            buf.altReleaseAt = -1;
+            buf.altActive = false;
+            if (buf.appliedInput != buf.realInput) {
+                sendButton(layer, buf.realInput);
+            }
+        }
+    }
+
     void deliverPending(PlayLayer* layer, PlayerObject* player) {
         if (buf.sinceInput <= 998) {
             ++buf.sinceInput;
         }
+        stepAltClick(layer, player);
         // v2.85: nothing is sent to the game while you're dead (a press then carried over into
         // the next attempt)
         if (player->m_isDead) {
@@ -10508,7 +10562,7 @@ namespace online {
             buf.autoClicked = false;
         }
         if (buf.queue.empty()) {
-            if (buf.appliedInput != buf.realInput && !buf.autoReleased && !buf.autoClicked) {
+            if (buf.appliedInput != buf.realInput && !buf.autoReleased && !buf.autoClicked && !buf.altActive) {
                 sendButton(layer, buf.realInput);
             }
             tryAutoRelease(layer, player);
@@ -14044,6 +14098,12 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
                 finishDrift("");
             }
             recordRealInput(down, p1);
+            // v3.2.2: your press gets its alternate click 1/CPS later (one at a time: a new press
+            // moves it)
+            if (down && buf.enabled && buf.altClick && !autoplay.active && p1 && !p1->m_isDead && !this->m_isPlatformer) {
+                buf.altAt = tickCount + std::max(1, st(240 / std::max(2, buf.altCps)));
+                buf.altPressAt = buf.altReleaseAt = -1;
+            }
         }
         if (!buf.simulating && button == 1 && !buf.injecting) {
             // v2.21 performance log: what this click cost, measured around the whole decision.
