@@ -6,7 +6,7 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"version": "v3.2.2-alpha.3",
+	"version": "v3.2.2-alpha.4",
 	"id": "basu.input-buffer",
 	"name": "Click Before Frames",
 	"developer": "BASU",
@@ -18,7 +18,7 @@
 			"description": "Max delay for the CUSTOM stage (key 6), all modes except wave. 4 ticks = 1 frame at 60fps.",
 			"default": 40,
 			"min": 1,
-			"max": 64
+			"max": 80
 		},
 		"custom-wave-ticks": {
 			"type": "int",
@@ -26,7 +26,7 @@
 			"description": "Max delay for the CUSTOM stage (key 6) while in wave.",
 			"default": 20,
 			"min": 0,
-			"max": 64
+			"max": 80
 		},
 		"sim-budget-ms": {
 			"type": "float",
@@ -252,7 +252,7 @@
 			"description": "Ship's own max delay, used instead of the stage (key 6). Ship has momentum, so small delays are enough and big ones feel laggy. 4 ticks = 1 frame at 60fps.",
 			"default": 4,
 			"min": 0,
-			"max": 16
+			"max": 80
 		},
 		"orb-timing": {
 			"type": "bool",

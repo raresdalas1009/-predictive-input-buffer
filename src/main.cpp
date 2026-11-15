@@ -839,7 +839,7 @@ namespace {
 
     // v2.88 per-mode frames, kept in the mod's saved values (they start from your custom stage)
     constexpr char const* MODE_NAMES[] = { "Cube", "Ship", "Ball", "UFO", "Wave", "Robot", "Spider", "Swing" };
-    constexpr int MODE_TICKS_MAX = 40;  // 10 frames
+    constexpr int MODE_TICKS_MAX = 80;  // 20 frames (v3.2.2: was 10)
 
     void readModeTicks() {
         auto* mod = Mod::get();
@@ -4540,7 +4540,7 @@ namespace {
         if (anyWave) {
             horizon = fullWaveHorizon(mini);
         }
-        int maxDelay = st(anyWave ? buf.ticksWave : (anyShip ? std::clamp(buf.shipMaxDelay, 0, 16) : buf.ticksAll));
+        int maxDelay = st(anyWave ? buf.ticksWave : (anyShip ? std::clamp(buf.shipMaxDelay, 0, MODE_TICKS_MAX) : buf.ticksAll));
         if (buf.lowLatency) {
             maxDelay = std::min(maxDelay, st(4));  // at most 1 frame (60 fps) of delay
         }
@@ -11803,8 +11803,8 @@ private:
             label(m_page, i == 4 ? "Click & release" : "Click", 0.46f, m_text, { cx + 40.f, cy + rh / 2.f }, { 0.f, 0.5f });
             m_modeValues[i] = stepper({ cx + colW - 6.f, cy + rh / 2.f }, menu_selector(BufferMenu::onModeStep), i * 10);
         }
-        label(m_page, buf.perMode ? "Used now (Custom stage). Half-frame steps, up to 10 frames."
-                                  : "Pick Custom on the Stage page to use these. Half-frame steps, up to 10 frames.",
+        label(m_page, buf.perMode ? "Used now (Custom stage). Half-frame steps, up to 20 frames."
+                                  : "Pick Custom on the Stage page to use these. Half-frame steps, up to 20 frames.",
             0.36f, m_muted, { x + w / 2.f, FOOT + 12.f })->limitLabelWidth(w - 10.f, 0.36f, 0.15f);
         refreshModes();
     }
