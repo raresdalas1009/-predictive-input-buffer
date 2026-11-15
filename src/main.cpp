@@ -10708,6 +10708,518 @@ namespace online {
 // v3.0 menu: a sidebar (CBF logo, Log / Stage / Modes / Tools, theme picker, platform), a header
 // with the stage chip, a footer with the settings gear. Settings and Tuning are pages of their own
 // with a Done button. Everything is drawn in code (CCDrawNode), so it looks the same everywhere.
+// v3.2.2: shared configs. Your settings (the buffer's, not autoplay's or personal ones like the
+// keybinds) go up to the CBF site with a name; anyone can load them. Loading keeps a copy of your
+// own first ("Restore Mine").
+namespace configs {
+    enum class K { Bool, Int, Float, Str };
+    struct Key {
+        char const* key;
+        K kind;
+        double lo, hi;
+        char const* options;
+    };
+    constexpr Key KEYS[] = {
+        { "custom-ticks", K::Int, 1.0, 80.0, "" },
+        { "custom-wave-ticks", K::Int, 0.0, 80.0, "" },
+        { "sim-budget-ms", K::Float, 1.0, 30.0, "" },
+        { "smart-prediction", K::Bool, 0.0, 0.0, "" },
+        { "ground-horizon", K::Int, 48.0, 240.0, "" },
+        { "practice-only", K::Bool, 0.0, 0.0, "" },
+        { "wave-horizon", K::Int, 20.0, 160.0, "" },
+        { "orb-assume-hit", K::Bool, 0.0, 0.0, "" },
+        { "orb-try-both", K::Bool, 0.0, 0.0, "" },
+        { "avoid-moving-objects", K::Bool, 0.0, 0.0, "" },
+        { "wave-auto-release", K::Bool, 0.0, 0.0, "" },
+        { "auto-release-window", K::Int, 2.0, 24.0, "" },
+        { "wave-spam-gap", K::Int, 4.0, 40.0, "" },
+        { "wave-spam-streak", K::Int, 2.0, 6.0, "" },
+        { "orb-align", K::Bool, 0.0, 0.0, "" },
+        { "orb-align-ticks", K::Int, 1.0, 64.0, "" },
+        { "wave-v46", K::Bool, 0.0, 0.0, "" },
+        { "wave-safety-margin", K::Bool, 0.0, 0.0, "" },
+        { "orb-align-ground", K::Bool, 0.0, 0.0, "" },
+        { "full-ghost-state", K::Bool, 0.0, 0.0, "" },
+        { "robot-smart", K::Bool, 0.0, 0.0, "" },
+        { "robot-auto-release", K::Bool, 0.0, 0.0, "" },
+        { "auto-click", K::Bool, 0.0, 0.0, "" },
+        { "alt-click", K::Bool, 0.0, 0.0, "" },
+        { "alt-click-cps", K::Int, 2.0, 30.0, "" },
+        { "click-sounds", K::Bool, 0.0, 0.0, "" },
+        { "click-sound-pack", K::Str, 0.0, 0.0, "Mouse|Soft|Keyboard|Pop|Custom" },
+        { "click-sound-volume", K::Int, 0.0, 100.0, "" },
+        { "click-sound-release", K::Bool, 0.0, 0.0, "" },
+        { "click-sound-autoplay", K::Bool, 0.0, 0.0, "" },
+        { "level-memory", K::Bool, 0.0, 0.0, "" },
+        { "auto-release-normal-runs", K::Bool, 0.0, 0.0, "" },
+        { "spider-smart", K::Bool, 0.0, 0.0, "" },
+        { "dash-auto-release", K::Bool, 0.0, 0.0, "" },
+        { "ship-buffer", K::Bool, 0.0, 0.0, "" },
+        { "ship-max-delay", K::Int, 0.0, 80.0, "" },
+        { "orb-timing", K::Bool, 0.0, 0.0, "" },
+        { "cube-late-crash", K::Int, 0.0, 240.0, "" },
+        { "predict-moving-objects", K::Bool, 0.0, 0.0, "" },
+        { "predict-move-triggers", K::Bool, 0.0, 0.0, "" },
+        { "no-hitch-searches", K::Bool, 0.0, 0.0, "" },
+        { "plan-next-click", K::Bool, 0.0, 0.0, "" },
+        { "robust-saves", K::Bool, 0.0, 0.0, "" },
+        { "ignore-touching-hazards", K::Bool, 0.0, 0.0, "" },
+        { "cbf-sync", K::Bool, 0.0, 0.0, "" },
+        { "low-latency", K::Bool, 0.0, 0.0, "" },
+        { "ufo-smart", K::Bool, 0.0, 0.0, "" },
+        { "more-time-death-spots", K::Bool, 0.0, 0.0, "" },
+        { "ship-spam-gap", K::Int, 2.0, 40.0, "" },
+        { "ball-smart", K::Bool, 0.0, 0.0, "" },
+        { "swing-smart", K::Bool, 0.0, 0.0, "" },
+        { "training-mode", K::Bool, 0.0, 0.0, "" },
+        { "death-heatmap", K::Bool, 0.0, 0.0, "" },
+        { "save-ding", K::Bool, 0.0, 0.0, "" },
+        { "performance-mode", K::Bool, 0.0, 0.0, "" },
+        { "predict-through-portals", K::Bool, 0.0, 0.0, "" },
+        { "auto-budget", K::Bool, 0.0, 0.0, "" },
+    };
+
+    matjson::Value collect() {
+        auto* mod = Mod::get();
+        auto v = matjson::Value::object();
+        for (auto const& k : KEYS) {
+            switch (k.kind) {
+                case K::Bool: v[k.key] = mod->getSettingValue<bool>(k.key); break;
+                case K::Int: v[k.key] = mod->getSettingValue<int64_t>(k.key); break;
+                case K::Float: v[k.key] = mod->getSettingValue<double>(k.key); break;
+                case K::Str: v[k.key] = std::string(mod->getSettingValue<std::string>(k.key)); break;
+            }
+        }
+        v["sv-stage"] = buf.stage;
+        v["sv-per-mode"] = buf.perMode;
+        for (int i = 0; i < 8; ++i) {
+            v[fmt::format("sv-mode-ticks-{}", i)] = buf.modeTicks[i];
+        }
+        v["sv-mode-off"] = static_cast<int>(buf.modeOff);
+        return v;
+    }
+
+    // sets what it knows, skips anything else; returns how many were set
+    int apply(matjson::Value const& v) {
+        if (!v.isObject()) {
+            return 0;
+        }
+        auto* mod = Mod::get();
+        int n = 0;
+        for (auto const& k : KEYS) {
+            if (!v.contains(k.key)) {
+                continue;
+            }
+            auto const& x = v[k.key];
+            switch (k.kind) {
+                case K::Bool:
+                    if (auto b = x.asBool(); b.isOk()) {
+                        mod->setSettingValue<bool>(k.key, b.unwrap());
+                        ++n;
+                    }
+                    break;
+                case K::Int:
+                    if (auto d = x.asDouble(); d.isOk()) {
+                        double c = k.hi > k.lo ? std::clamp(d.unwrap(), k.lo, k.hi) : d.unwrap();
+                        mod->setSettingValue<int64_t>(k.key, static_cast<int64_t>(std::llround(c)));
+                        ++n;
+                    }
+                    break;
+                case K::Float:
+                    if (auto d = x.asDouble(); d.isOk()) {
+                        mod->setSettingValue<double>(k.key, k.hi > k.lo ? std::clamp(d.unwrap(), k.lo, k.hi) : d.unwrap());
+                        ++n;
+                    }
+                    break;
+                case K::Str:
+                    if (auto s = x.asString(); s.isOk()) {
+                        std::string val = s.unwrap();
+                        std::string opts = std::string("|") + k.options + "|";
+                        if (!val.empty() && val.find('|') == std::string::npos && (std::string_view(k.options).empty() || opts.find("|" + val + "|") != std::string::npos)) {
+                            mod->setSettingValue<std::string>(k.key, val);
+                            ++n;
+                        }
+                    }
+                    break;
+            }
+        }
+        if (v.contains("sv-per-mode")) {
+            buf.perMode = v["sv-per-mode"].asBool().unwrapOr(buf.perMode);
+        }
+        for (int i = 0; i < 8; ++i) {
+            auto key = fmt::format("sv-mode-ticks-{}", i);
+            if (v.contains(key)) {
+                buf.modeTicks[i] = std::clamp(static_cast<int>(v[key].asInt().unwrapOr(buf.modeTicks[i])), 0, MODE_TICKS_MAX);
+            }
+        }
+        if (v.contains("sv-mode-off")) {
+            buf.modeOff = static_cast<uint32_t>(v["sv-mode-off"].asInt().unwrapOr(buf.modeOff)) & 0xffffu;
+        }
+        saveModeTicks();
+        if (v.contains("sv-stage")) {
+            buf.stage = std::clamp(static_cast<int>(v["sv-stage"].asInt().unwrapOr(buf.stage)), 0, STAGE_COUNT - 1);
+        }
+        cycleStage(0);  // applies the stage and reads every setting again
+        refreshWatermark();
+        refreshPanel();
+        return n;
+    }
+
+    struct Entry {
+        int cid = 0;
+        std::string name, author, notes, version;
+        int uses = 0;
+        bool mine = false;
+    };
+
+    std::string api(std::string const& path) {
+        return std::string(online::URL) + path;
+    }
+}
+
+class ConfigPicker : public geode::Popup {
+    std::vector<configs::Entry> m_list;
+    CCLabelBMFont* m_status = nullptr;
+    geode::ScrollLayer* m_scroll = nullptr;
+    CCNode* m_view = nullptr;
+    CCMenu* m_top = nullptr;
+    geode::TextInput* m_name = nullptr;
+    geode::TextInput* m_notes = nullptr;
+    std::string m_sort = "top";
+    bool m_busy = false;
+    std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
+
+    static constexpr float PW = 420.f, PH = 270.f;
+
+public:
+    ~ConfigPicker() override { *m_alive = false; }
+
+    static ConfigPicker* create() {
+        auto* ret = new ConfigPicker();
+        if (ret->init()) {
+            ret->autorelease();
+            return ret;
+        }
+        delete ret;
+        return nullptr;
+    }
+
+    bool init() {
+        if (!Popup::init(PW, PH, "GJ_square01.png")) {
+            return false;
+        }
+        this->setTitle("Configs");
+        m_top = CCMenu::create();
+        m_top->setPosition({ 0.f, 0.f });
+        m_mainLayer->addChild(m_top, 5);
+        auto add = [&](char const* text, SEL_MenuHandler sel, float x, int tag, bool gold) {
+            auto* spr = ButtonSprite::create(text, gold ? "goldFont.fnt" : "bigFont.fnt", gold ? "GJ_button_01.png" : "GJ_button_04.png", 0.55f);
+            spr->setScale(0.7f);
+            auto* b = CCMenuItemSpriteExtra::create(spr, this, sel);
+            b->setTag(tag);
+            b->setPosition({ x, PH - 48.f });
+            m_top->addChild(b);
+        };
+        add("Most Used", menu_selector(ConfigPicker::onSort), 62.f, 0, false);
+        add("Newest", menu_selector(ConfigPicker::onSort), 150.f, 1, false);
+        add("Share Yours", menu_selector(ConfigPicker::onShareView), 252.f, 0, true);
+        if (Mod::get()->getSavedValue<bool>("config-backup-have", false)) {
+            add("Restore Mine", menu_selector(ConfigPicker::onRestore), 358.f, 0, false);
+        }
+        m_status = CCLabelBMFont::create("", "chatFont.fnt");
+        m_status->setScale(0.7f);
+        m_status->setPosition({ PW / 2.f, PH / 2.f - 20.f });
+        m_mainLayer->addChild(m_status, 4);
+        loadList();
+        return true;
+    }
+
+    void clearView() {
+        if (m_view) {
+            m_view->removeFromParent();
+            m_view = nullptr;
+        }
+        m_scroll = nullptr;
+        m_name = m_notes = nullptr;
+    }
+
+    void say(std::string const& text) {
+        m_status->setString(text.c_str());
+        m_status->limitLabelWidth(PW - 40.f, 0.7f, 0.2f);
+        m_status->setVisible(!text.empty());
+    }
+
+    void loadList() {
+        clearView();
+        say("Loading the shared configs...");
+        if (std::string_view(online::URL).empty()) {
+            say("The CBF site isn't set up in this build.");
+            return;
+        }
+        auto alive = m_alive;
+        std::string url = configs::api(fmt::format("/api/configs?sort={}&id={}", m_sort, online::id()));
+        std::thread([alive, url, this] {
+            auto res = web::WebRequest().timeout(std::chrono::seconds(15)).userAgent("ClickBeforeFrames").getSync(url);
+            std::vector<configs::Entry> list;
+            bool ok = false;
+            if (res.ok()) {
+                if (auto j = res.json(); j.isOk() && j.unwrap()["configs"].isArray()) {
+                    ok = true;
+                    for (auto const& c : j.unwrap()["configs"]) {
+                        configs::Entry e;
+                        e.cid = static_cast<int>(c["cid"].asInt().unwrapOr(0));
+                        e.name = c["name"].asString().unwrapOr("?");
+                        e.author = c["author"].asString().unwrapOr("?");
+                        e.notes = c["notes"].asString().unwrapOr("");
+                        e.version = c["version"].asString().unwrapOr("");
+                        e.uses = static_cast<int>(c["uses"].asInt().unwrapOr(0));
+                        e.mine = c["mine"].asBool().unwrapOr(false);
+                        if (e.cid > 0) {
+                            list.push_back(e);
+                        }
+                    }
+                }
+            }
+            queueInMainThread([alive, list, ok, this] {
+                if (*alive) {
+                    showList(list, ok);
+                }
+            });
+        }).detach();
+    }
+
+    void showList(std::vector<configs::Entry> const& list, bool ok) {
+        clearView();
+        m_list = list;
+        if (!ok) {
+            say("Couldn't reach the CBF site.");
+            return;
+        }
+        if (m_list.empty()) {
+            say("No configs shared yet. Be the first: Share Yours.");
+            return;
+        }
+        say("");
+        float vw = PW - 30.f, vh = PH - 80.f, rowH = 38.f;
+        m_scroll = geode::ScrollLayer::create({ vw, vh });
+        m_scroll->setPosition({ 15.f, 14.f });
+        m_mainLayer->addChild(m_scroll);
+        m_view = m_scroll;
+        float total = std::max(vh, rowH * m_list.size());
+        m_scroll->m_contentLayer->setContentSize({ vw, total });
+        auto* menu = CCMenu::create();
+        menu->setPosition({ 0.f, 0.f });
+        menu->setContentSize({ vw, total });
+        m_scroll->m_contentLayer->addChild(menu);
+        for (size_t i = 0; i < m_list.size(); ++i) {
+            auto const& c = m_list[i];
+            float y = total - rowH * (i + 0.5f);
+            auto* t = CCLabelBMFont::create(c.name.c_str(), "bigFont.fnt");
+            t->setAnchorPoint({ 0.f, 0.5f });
+            t->setPosition({ 4.f, y + 7.f });
+            t->limitLabelWidth(vw - (c.mine ? 130.f : 80.f), 0.45f, 0.1f);
+            menu->addChild(t);
+            std::string sub = fmt::format("by {}  -  {} use{}", c.author, c.uses, c.uses == 1 ? "" : "s");
+            if (!c.version.empty()) sub += "  -  " + c.version;
+            if (!c.notes.empty()) sub += "  -  " + c.notes;
+            auto* s = CCLabelBMFont::create(sub.c_str(), "chatFont.fnt");
+            s->setAnchorPoint({ 0.f, 0.5f });
+            s->setPosition({ 4.f, y - 8.f });
+            s->limitLabelWidth(vw - (c.mine ? 130.f : 80.f), 0.55f, 0.1f);
+            s->setColor({ 200, 200, 220 });
+            menu->addChild(s);
+            auto* spr = ButtonSprite::create("Load", "goldFont.fnt", "GJ_button_01.png", 0.6f);
+            auto* b = CCMenuItemSpriteExtra::create(spr, this, menu_selector(ConfigPicker::onLoad));
+            b->setTag(static_cast<int>(i));
+            b->setPosition({ vw - 32.f, y });
+            menu->addChild(b);
+            if (c.mine) {
+                auto* dspr = ButtonSprite::create("Delete", "bigFont.fnt", "GJ_button_06.png", 0.5f);
+                dspr->setScale(0.7f);
+                auto* d = CCMenuItemSpriteExtra::create(dspr, this, menu_selector(ConfigPicker::onDelete));
+                d->setTag(static_cast<int>(i));
+                d->setPosition({ vw - 88.f, y });
+                menu->addChild(d);
+            }
+        }
+        m_scroll->scrollToTop();
+    }
+
+    void onSort(CCObject* sender) {
+        m_sort = sender->getTag() == 1 ? "new" : "top";
+        loadList();
+    }
+
+    void onLoad(CCObject* sender) {
+        int i = sender->getTag();
+        if (m_busy || i < 0 || i >= static_cast<int>(m_list.size())) {
+            return;
+        }
+        auto c = m_list[i];
+        Ref<ConfigPicker> self = this;
+        createQuickPopup("Load config", fmt::format("Use <cy>{}</c> by <cg>{}</c>?\nYour settings are kept: <cj>Restore Mine</c> puts them back.", c.name, c.author),
+            "Cancel", "Load", [self, c](FLAlertLayer*, bool yes) {
+                if (yes) {
+                    self->fetchAndApply(c);
+                }
+            });
+    }
+
+    void fetchAndApply(configs::Entry c) {
+        m_busy = true;
+        say(fmt::format("Loading {}...", c.name));
+        auto alive = m_alive;
+        std::string url = configs::api(fmt::format("/api/configs/get?cid={}", c.cid));
+        std::thread([alive, url, c, this] {
+            auto res = web::WebRequest().timeout(std::chrono::seconds(15)).userAgent("ClickBeforeFrames").getSync(url);
+            std::optional<matjson::Value> data;
+            if (res.ok()) {
+                if (auto j = res.json(); j.isOk() && j.unwrap()["data"].isObject()) {
+                    data = j.unwrap()["data"];
+                }
+            }
+            queueInMainThread([alive, data, c, this] {
+                if (!data) {
+                    if (*alive) {
+                        m_busy = false;
+                        say("Couldn't load it.");
+                    }
+                    return;
+                }
+                if (!Mod::get()->getSavedValue<bool>("config-backup-have", false)) {
+                    Mod::get()->setSavedValue("config-backup", configs::collect());
+                    Mod::get()->setSavedValue("config-backup-have", true);
+                }
+                int n = configs::apply(*data);
+                Notification::create(fmt::format("Config loaded: {} ({} settings)", c.name, n), NotificationIcon::Success)->show();
+                if (*alive) {
+                    m_busy = false;
+                    this->onClose(nullptr);
+                }
+            });
+        }).detach();
+    }
+
+    void onRestore(CCObject*) {
+        auto v = Mod::get()->getSavedValue<matjson::Value>("config-backup");
+        Ref<ConfigPicker> self = this;
+        createQuickPopup("Restore Mine", "Put back the settings you had before loading a config?", "Cancel", "Restore", [self, v](FLAlertLayer*, bool yes) {
+            if (!yes) {
+                return;
+            }
+            configs::apply(v);
+            Mod::get()->setSavedValue("config-backup-have", false);
+            Notification::create("Your settings are back", NotificationIcon::Success)->show();
+            self->onClose(nullptr);
+        });
+    }
+
+    void onDelete(CCObject* sender) {
+        int i = sender->getTag();
+        if (m_busy || i < 0 || i >= static_cast<int>(m_list.size())) {
+            return;
+        }
+        auto c = m_list[i];
+        Ref<ConfigPicker> self = this;
+        createQuickPopup("Delete config", fmt::format("Delete <cy>{}</c> from the site?", c.name), "Cancel", "Delete", [self, c](FLAlertLayer*, bool yes) {
+            if (yes) {
+                self->post("/api/configs/delete", fmt::format(R"({{"id":"{}","cid":{}}})", online::id(), c.cid), "Deleted.");
+            }
+        });
+    }
+
+    void onShareView(CCObject*) {
+        clearView();
+        say("");
+        auto* node = CCNode::create();
+        m_mainLayer->addChild(node, 3);
+        m_view = node;
+        auto text = [&](std::string const& s, float y, float scale, ccColor3B color) {
+            auto* l = CCLabelBMFont::create(s.c_str(), "chatFont.fnt");
+            l->setPosition({ PW / 2.f, y });
+            l->setScale(scale);
+            l->limitLabelWidth(PW - 40.f, scale, 0.2f);
+            l->setColor(color);
+            node->addChild(l);
+        };
+        if (!account::isLinked()) {
+            text("Link this game to your Discord first:", PH / 2.f + 10.f, 0.8f, { 255, 255, 255 });
+            text("open the CBF menu > Account > Link with Discord.", PH / 2.f - 10.f, 0.7f, { 200, 200, 220 });
+            return;
+        }
+        text("Your current settings (stage, frames, switches, click sounds)", PH - 78.f, 0.65f, { 200, 200, 220 });
+        text("go up with your Discord name. Same name again = update it.", PH - 92.f, 0.65f, { 200, 200, 220 });
+        m_name = geode::TextInput::create(PW - 80.f, "Name (like: Wave god 240hz)");
+        m_name->setMaxCharCount(32);
+        m_name->setCommonFilter(CommonFilter::Any);
+        m_name->setPosition({ PW / 2.f, PH - 122.f });
+        node->addChild(m_name);
+        m_notes = geode::TextInput::create(PW - 80.f, "Notes (optional: what it's good for)");
+        m_notes->setMaxCharCount(140);
+        m_notes->setCommonFilter(CommonFilter::Any);
+        m_notes->setPosition({ PW / 2.f, PH - 160.f });
+        node->addChild(m_notes);
+        auto* menu = CCMenu::create();
+        menu->setPosition({ 0.f, 0.f });
+        node->addChild(menu);
+        auto* spr = ButtonSprite::create("Publish", "goldFont.fnt", "GJ_button_01.png", 0.8f);
+        auto* b = CCMenuItemSpriteExtra::create(spr, this, menu_selector(ConfigPicker::onPublish));
+        b->setPosition({ PW / 2.f, 40.f });
+        menu->addChild(b);
+    }
+
+    void onPublish(CCObject*) {
+        if (m_busy || !m_name) {
+            return;
+        }
+        std::string name = std::string(m_name->getString());
+        std::string notes = m_notes ? std::string(m_notes->getString()) : std::string();
+        if (name.size() < 2) {
+            Notification::create("Give it a name first", NotificationIcon::Warning)->show();
+            return;
+        }
+        auto body = matjson::Value::object();
+        body["id"] = online::id();
+        body["name"] = name;
+        body["notes"] = notes;
+        body["data"] = configs::collect();
+        body["version"] = Mod::get()->getVersion().toVString();
+        body["platform"] = std::string(online::platform());
+        post("/api/configs", body.dump(matjson::NO_INDENTATION), "Published! It's on the list now.");
+    }
+
+    void post(std::string const& path, std::string const& body, std::string const& done) {
+        m_busy = true;
+        say("Sending...");
+        auto alive = m_alive;
+        std::string url = configs::api(path);
+        std::thread([alive, url, body, done, this] {
+            auto res = web::WebRequest().timeout(std::chrono::seconds(15)).userAgent("ClickBeforeFrames").header("Content-Type", "application/json")
+                .bodyString(body).postSync(url);
+            std::string err;
+            if (!res.ok()) {
+                err = "Couldn't send it.";
+                if (auto j = res.json(); j.isOk()) {
+                    err = j.unwrap()["error"].asString().unwrapOr(err);
+                }
+            }
+            queueInMainThread([alive, err, done, this] {
+                if (!*alive) {
+                    return;
+                }
+                m_busy = false;
+                if (!err.empty()) {
+                    say(err);
+                    return;
+                }
+                Notification::create(done, NotificationIcon::Success)->show();
+                m_sort = "new";
+                loadList();
+            });
+        }).detach();
+    }
+};
+
 // alpha.31: Choose Macro: the macros of this level on every site, the player picks one
 class MacroPicker : public geode::Popup {
     int m_level = 0;
@@ -11758,7 +12270,11 @@ private:
             }
             start = end + 1;
         }
-        button(m_pageMenu, "Export Report", menu_selector(BufferMenu::onCopyLog), { x + colW / 2.f, FOOT + 20.f }, colW - 16.f, true);
+        {
+            float hb = (colW - 22.f) / 2.f;  // v3.2.2: shared configs
+            button(m_pageMenu, "Configs", menu_selector(BufferMenu::onConfigs), { x + 8.f + hb / 2.f, FOOT + 20.f }, hb, true);
+            button(m_pageMenu, "Export Report", menu_selector(BufferMenu::onCopyLog), { x + 14.f + hb * 1.5f, FOOT + 20.f }, hb);
+        }
 
         float rx = x + colW + 6.f;
         card({ rx, FOOT + 6.f, colW, top - FOOT - 6.f }, "Autoplay", "for showcases");
@@ -12521,6 +13037,13 @@ private:
             onlineMacroTried.erase(id);
             autoplay.macroDeaths.clear();
             loadMacro(layer);
+        }
+    }
+
+    // v3.2.2
+    void onConfigs(CCObject*) {
+        if (auto* p = ConfigPicker::create()) {
+            p->show();
         }
     }
 
