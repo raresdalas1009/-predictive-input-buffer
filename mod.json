@@ -6,7 +6,7 @@
 		"mac": "2.2081",
 		"ios": "2.2081"
 	},
-	"version": "v3.2.2-alpha.4",
+	"version": "v3.2.2-alpha.5",
 	"id": "basu.input-buffer",
 	"name": "Click Before Frames",
 	"developer": "BASU",
@@ -209,6 +209,44 @@
 				"arrows": true,
 				"arrow-step": 1
 			}
+		},
+		"click-sounds": {
+			"type": "bool",
+			"name": "Click Sounds",
+			"description": "A click sound each time you press (and let go, if Release Sounds is on) in a level. The sound plays the moment you click, even when the buffer delays the input.",
+			"default": false
+		},
+		"click-sound-pack": {
+			"type": "string",
+			"name": "Click Sound",
+			"description": "Mouse, Soft, Keyboard or Pop. Custom: put click-down.ogg (and click-up.ogg for releases; .mp3 or .wav work too) in this mod's config folder (Geode > this mod > the folder button).",
+			"default": "Mouse",
+			"one-of": ["Mouse", "Soft", "Keyboard", "Pop", "Custom"]
+		},
+		"click-sound-volume": {
+			"type": "int",
+			"name": "Click Sound Volume",
+			"description": "How loud the click sounds are, in percent.",
+			"default": 70,
+			"min": 0,
+			"max": 100,
+			"control": {
+				"slider": true,
+				"slider-step": 5,
+				"input": true
+			}
+		},
+		"click-sound-release": {
+			"type": "bool",
+			"name": "Release Sounds",
+			"description": "A (quieter) sound when you let go too.",
+			"default": true
+		},
+		"click-sound-autoplay": {
+			"type": "bool",
+			"name": "Click Sounds for Autoplay",
+			"description": "Autoplay's clicks make the sound too (for showcases).",
+			"default": true
 		},
 		"level-memory": {
 			"type": "bool",
@@ -555,6 +593,9 @@
 	"resources": {
 		"sprites": [
 			"resources/*.png"
+		],
+		"files": [
+			"resources/sounds/*.ogg"
 		],
 		"fonts": {
 			"orbitron": {

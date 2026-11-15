@@ -715,6 +715,72 @@ namespace {
 
     void readModeTicks();
 
+    // v3.2.2: click sounds, played straight through FMOD (own volume, any file)
+    struct ClickSounds {
+        bool on = false, release = true, autoplay = true;
+        std::string pack = "Mouse";
+        float volume = 0.7f;
+        std::unordered_map<std::string, FMOD::Sound*> cache;
+    } clickSnd;
+
+    void readClickSounds() {
+        auto* mod = Mod::get();
+        clickSnd.on = mod->getSettingValue<bool>("click-sounds");
+        clickSnd.release = mod->getSettingValue<bool>("click-sound-release");
+        clickSnd.autoplay = mod->getSettingValue<bool>("click-sound-autoplay");
+        clickSnd.volume = static_cast<float>(std::clamp<int64_t>(mod->getSettingValue<int64_t>("click-sound-volume"), 0, 100)) / 100.f;
+        clickSnd.pack = mod->getSettingValue<std::string>("click-sound-pack");
+    }
+
+    std::string clickSoundPath(bool down) {
+        if (clickSnd.pack == "Custom") {
+            for (char const* ext : { ".ogg", ".mp3", ".wav" }) {
+                auto f = Mod::get()->getConfigDir() / (std::string(down ? "click-down" : "click-up") + ext);
+                std::error_code ec;
+                if (std::filesystem::exists(f, ec)) {
+                    return f.string();
+                }
+            }
+            return "";
+        }
+        std::string name = clickSnd.pack;
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        auto file = fmt::format("{}/cbf-{}-{}.ogg", Mod::get()->getID(), name, down ? "down" : "up");
+        return CCFileUtils::get()->fullPathForFilename(file.c_str(), false);
+    }
+
+    void playClickSound(bool down, bool fromAutoplay) {
+        if (!clickSnd.on || clickSnd.volume <= 0.f || (!down && !clickSnd.release) || (fromAutoplay && !clickSnd.autoplay)) {
+            return;
+        }
+        auto* engine = FMODAudioEngine::sharedEngine();
+        if (!engine || !engine->m_system) {
+            return;
+        }
+        auto path = clickSoundPath(down);
+        if (path.empty()) {
+            return;
+        }
+        FMOD::Sound* sound = nullptr;
+        if (auto it = clickSnd.cache.find(path); it != clickSnd.cache.end()) {
+            sound = it->second;
+        }
+        else {
+            if (engine->m_system->createSound(path.c_str(), FMOD_DEFAULT | FMOD_CREATESAMPLE, nullptr, &sound) != FMOD_OK) {
+                sound = nullptr;
+            }
+            clickSnd.cache[path] = sound;  // a missing file isn't tried again every click
+        }
+        if (!sound) {
+            return;
+        }
+        FMOD::Channel* channel = nullptr;
+        if (engine->m_system->playSound(sound, nullptr, true, &channel) == FMOD_OK && channel) {
+            channel->setVolume(clickSnd.volume * (down ? 1.f : 0.75f));
+            channel->setPaused(false);
+        }
+    }
+
     void readSettings() {
         auto* mod = Mod::get();
         buf.smart = mod->getSettingValue<bool>("smart-prediction");
@@ -732,6 +798,7 @@ namespace {
         buf.autoClick = mod->getSettingValue<bool>("auto-click");
         buf.altClick = mod->getSettingValue<bool>("alt-click");
         buf.altCps = static_cast<int>(std::clamp<int64_t>(mod->getSettingValue<int64_t>("alt-click-cps"), 2, 30));
+        readClickSounds();
         buf.autoWindow = static_cast<int>(mod->getSettingValue<int64_t>("auto-release-window"));
         buf.driftCheck = mod->getSettingValue<bool>("drift-check");
         buf.spamGap = static_cast<int>(mod->getSettingValue<int64_t>("wave-spam-gap"));
@@ -14130,6 +14197,10 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
             autoplay.userTouched = true;
             autoplay.plan.clear();
             autoplay.verifyAt = -1;
+        }
+        if (!buf.simulating && button == 1 && GameManager::get()->m_playLayer &&
+            static_cast<GJBaseGameLayer*>(GameManager::get()->m_playLayer) == this && (!buf.injecting || autoplay.active)) {
+            playClickSound(down, buf.injecting);
         }
         if (!buf.simulating && button == 1 && !buf.injecting) {
             auto* p1 = this->m_player1;
