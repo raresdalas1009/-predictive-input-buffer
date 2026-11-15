@@ -9,6 +9,10 @@
 //   POST /api/runs      the global brain: a run autoplay finished (level, its fingerprint, TPS, inputs)
 //   GET  /api/runs      the best shared run of a level (most replayed to the end, fewest fails)
 //   POST /api/runs/result  a game replayed a brain run: to the end, or it kept dying
+//   GET  /api/configs   shared configs (sort=top|new, q=search), without their settings
+//   POST /api/configs   a linked game publishes its settings: { id, name, notes, data } (same name = update)
+//   GET  /api/configs/get?cid=  one config's settings (counts a use)
+//   POST /api/configs/delete    { id, cid }: your own config
 //   GET  /api/latest    the newest mod version uploaded on the admin page
 //   GET  /download/latest   that file
 //   GET  /admin, POST /api/admin/upload   upload a new version (your Discord account only)
@@ -52,6 +56,10 @@ export default {
       if (url.pathname === "/api/runs" && request.method === "GET") return await runGet(url, env);
       if (url.pathname === "/api/runs/result" && request.method === "POST") return await runResult(request, env);
       if (url.pathname === "/api/beaten") return await beatenList(env);
+      if (url.pathname === "/api/configs" && request.method === "GET") return await configList(url, env);
+      if (url.pathname === "/api/configs" && request.method === "POST") return await configPublish(request, env);
+      if (url.pathname === "/api/configs/get") return await configGet(url, env);
+      if (url.pathname === "/api/configs/delete" && request.method === "POST") return await configDelete(request, env);
       if (url.pathname === "/api/latest") return await latest(env);
       if (url.pathname === "/download/latest") return await download(env);
       if (url.pathname === "/admin") return await adminPage(request, env);
@@ -791,4 +799,103 @@ function icon() {
   const bin = atob(ICON_PNG), bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return new Response(bytes, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
+}
+
+// v3.2.2: shared configs. Only games linked to Discord can publish (the author is the Discord name).
+async function ensureConfigs(env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS configs (cid INTEGER PRIMARY KEY AUTOINCREMENT, discord_id TEXT NOT NULL, author TEXT NOT NULL,
+     name TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', data TEXT NOT NULL, version TEXT NOT NULL DEFAULT '', platform TEXT NOT NULL DEFAULT '',
+     uses INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL)`
+  ).run();
+}
+
+function cleanText(v, max) {
+  return String(v || "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, max);
+}
+
+async function linkedUser(env, id) {
+  if (!/^[0-9a-f]{32}$/.test(String(id || ""))) return null;
+  const p = await env.DB.prepare(`SELECT discord_id FROM players WHERE id = ?1`).bind(id).first();
+  if (!p?.discord_id) return null;
+  return await env.DB.prepare(`SELECT discord_id, name FROM users WHERE discord_id = ?1`).bind(p.discord_id).first();
+}
+
+async function configPublish(request, env) {
+  let b;
+  try {
+    b = await request.json();
+  } catch {
+    return json({ error: "bad json" }, 400);
+  }
+  const user = await linkedUser(env, b.id);
+  if (!user) return json({ error: "link your game to Discord first (Account in the mod)" }, 403);
+  const name = cleanText(b.name, 32);
+  const notes = cleanText(b.notes, 140);
+  if (name.length < 2) return json({ error: "give it a name" }, 400);
+  const data = b.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return json({ error: "bad settings" }, 400);
+  const clean = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(data)) {
+    if (!/^[a-z0-9-]{1,48}$/.test(k) || ++n > 200) return json({ error: "bad settings" }, 400);
+    if (typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v))) clean[k] = v;
+    else if (typeof v === "string" && v.length <= 32) clean[k] = v;
+    else return json({ error: "bad settings" }, 400);
+  }
+  const text = JSON.stringify(clean);
+  if (text.length > 8000) return json({ error: "too big" }, 400);
+  await ensureConfigs(env);
+  const now = Date.now();
+  const mine = await env.DB.prepare(`SELECT cid FROM configs WHERE discord_id = ?1 AND name = ?2 COLLATE NOCASE`).bind(user.discord_id, name).first();
+  if (mine) {
+    await env.DB.prepare(`UPDATE configs SET notes = ?2, data = ?3, version = ?4, platform = ?5, author = ?6, at = ?7 WHERE cid = ?1`)
+      .bind(mine.cid, notes, text, cleanText(b.version, 24), cleanText(b.platform, 12), user.name, now).run();
+    return json({ ok: true, cid: mine.cid, updated: true });
+  }
+  const count = await env.DB.prepare(`SELECT COUNT(*) AS n FROM configs WHERE discord_id = ?1`).bind(user.discord_id).first();
+  if ((count?.n || 0) >= 10) return json({ error: "you have 10 configs already: delete one first" }, 400);
+  const r = await env.DB.prepare(
+    `INSERT INTO configs (discord_id, author, name, notes, data, version, platform, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
+  ).bind(user.discord_id, user.name, name, notes, text, cleanText(b.version, 24), cleanText(b.platform, 12), now).run();
+  return json({ ok: true, cid: r.meta?.last_row_id });
+}
+
+async function configList(url, env) {
+  await ensureConfigs(env);
+  const sort = url.searchParams.get("sort") === "new" ? "at DESC" : "uses DESC, at DESC";
+  const q = cleanText(url.searchParams.get("q"), 32);
+  const id = String(url.searchParams.get("id") || "");
+  let mineId = null;
+  if (id) mineId = (await linkedUser(env, id))?.discord_id || null;
+  const rows = (q
+    ? await env.DB.prepare(`SELECT cid, discord_id, author, name, notes, version, platform, uses, at FROM configs WHERE name LIKE ?1 OR author LIKE ?1 ORDER BY ${sort} LIMIT 60`).bind(`%${q}%`).all()
+    : await env.DB.prepare(`SELECT cid, discord_id, author, name, notes, version, platform, uses, at FROM configs ORDER BY ${sort} LIMIT 60`).all()).results;
+  return json({
+    configs: rows.map((r) => ({ cid: r.cid, author: r.author, name: r.name, notes: r.notes, version: r.version, platform: r.platform, uses: r.uses, at: r.at, mine: !!mineId && r.discord_id === mineId })),
+  }, 200, { "Cache-Control": "no-store" });
+}
+
+async function configGet(url, env) {
+  const cid = Number(url.searchParams.get("cid"));
+  if (!Number.isInteger(cid) || cid <= 0) return json({ error: "bad id" }, 400);
+  await ensureConfigs(env);
+  const r = await env.DB.prepare(`SELECT cid, author, name, notes, data, version FROM configs WHERE cid = ?1`).bind(cid).first();
+  if (!r) return json({ error: "not found" }, 404);
+  if (url.searchParams.get("use") !== "0") await env.DB.prepare(`UPDATE configs SET uses = uses + 1 WHERE cid = ?1`).bind(cid).run();
+  return json({ cid: r.cid, author: r.author, name: r.name, notes: r.notes, version: r.version, data: JSON.parse(r.data) });
+}
+
+async function configDelete(request, env) {
+  let b;
+  try {
+    b = await request.json();
+  } catch {
+    return json({ error: "bad json" }, 400);
+  }
+  const user = await linkedUser(env, b.id);
+  if (!user) return json({ error: "not linked" }, 403);
+  await ensureConfigs(env);
+  await env.DB.prepare(`DELETE FROM configs WHERE cid = ?1 AND discord_id = ?2`).bind(Number(b.cid), user.discord_id).run();
+  return json({ ok: true });
 }

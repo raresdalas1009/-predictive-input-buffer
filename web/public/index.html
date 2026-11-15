@@ -257,6 +257,20 @@
   .pfp { width: 86px; height: 86px; border-radius: 50%; object-fit: cover; background: #2f6bff; display: grid; place-items: center; font: 600 28px Inter, sans-serif; }
   .demon a.video { color: #c9d2ff; font-size: 14px; }
 
+  /* v3.2.2: shared configs */
+  #tab-configs .screen.box { height: 520px; }
+  .cfg { padding: 12px 4px; border-bottom: 1px solid rgba(255, 255, 255, 0.10); }
+  .cfg:last-child { border-bottom: 0; }
+  .cfg .top { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .cfg .n { font-size: clamp(22px, 2vw, 32px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .cfg .u { white-space: nowrap; color: #dcdde4; font-size: 20px; }
+  .cfg .by { color: #c9cad6; font-size: 19px; }
+  .cfg .notes { color: #e6e6ec; font-size: 19px; margin-top: 2px; overflow-wrap: anywhere; }
+  .cfgbar { display: flex; gap: 10px; align-items: center; margin: 0 0 10px 4px; flex-wrap: wrap; }
+  .cfgbar button { font: 400 22px "VT323", monospace; color: #f3f3f6; background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 10px; padding: 2px 12px; cursor: pointer; }
+  .cfgbar button.on { border-color: #ff2e3b; box-shadow: 0 0 8px rgba(255, 46, 59, 0.5); }
+  .cfgbar span { color: #c9cad6; font-size: 19px; }
+
   /* footer */
   .foot {
     grid-column: 2; position: relative; display: flex; align-items: flex-end; gap: 24px;
@@ -332,7 +346,8 @@
     .wrap { padding: 14px; }
     .bar { padding: 12px 16px; border-radius: 26px; gap: 12px; }
     .brand img { width: 40px; height: 40px; }
-    nav { margin-left: 0; }
+    nav { margin-left: 0; gap: 6px; flex-wrap: wrap; max-width: 100%; }
+    .tab { padding: 7px 12px 7px 10px; gap: 6px; font-size: 19px; }
     .account { margin-left: 0; }
     .grid { margin-top: 18px; gap: 18px; }
     .side { flex-direction: column; padding: 14px; border-radius: 30px; gap: 14px; }
@@ -374,6 +389,7 @@
     <nav>
       <button class="tab active" data-tab="stats"><i class="iris"></i>STATS</button>
       <button class="tab" data-tab="demons"><i class="iris"></i>DEMONLIST</button>
+      <button class="tab" data-tab="configs"><i class="iris"></i>CONFIGS</button>
     </nav>
     <div class="account" id="account"><a class="login" href="/auth/login">LOG IN WITH DISCORD</a></div>
   </header>
@@ -430,6 +446,12 @@
       <div id="tab-demons" hidden>
         <div class="hint">this is scrollable btw</div>
         <div class="demons" id="demons"><div class="empty">Loading…</div></div>
+      </div>
+      <div id="tab-configs" hidden>
+        <div class="tv"><div class="screen box"><h2>Shared configs</h2>
+          <div class="cfgbar"><button data-sort="top" class="on">MOST USED</button><button data-sort="new">NEWEST</button><span>Load one in the mod: menu &gt; Tools &gt; Configs. Share yours from there too.</span></div>
+          <div class="scroll" id="configs"><div class="empty">Loading…</div></div></div>
+          <div class="chin"><i class="knob"></i><i class="knob"></i><span class="grille"></span><span class="brand-tag">CBF</span><i class="led"></i></div></div>
       </div>
     </section>
 
@@ -573,6 +595,26 @@
     } catch { box.innerHTML = '<div class="empty">The demonlist couldn\'t be loaded.</div>'; }
   }
 
+  let cfgSort = "top";
+  async function loadConfigs() {
+    const box = document.getElementById("configs");
+    try {
+      const r = await (await fetch(`/api/configs?sort=${cfgSort}`)).json();
+      const ago = (t) => { const d = Math.floor((Date.now() - t) / 86400000); return d <= 0 ? "today" : d === 1 ? "yesterday" : `${d} days ago`; };
+      box.innerHTML = (r.configs || []).length ? list(r.configs, (c) => `
+        <div class="cfg"><div class="top"><div class="n" title="${esc(c.name)}">${esc(c.name)}</div><div class="u">${fmt(c.uses)} use${c.uses === 1 ? "" : "s"}</div></div>
+          <div class="by">by ${esc(c.author)} · ${ago(c.at)}${c.version ? ` · ${esc(c.version)}` : ""}</div>
+          ${c.notes ? `<div class="notes">${esc(c.notes)}</div>` : ""}</div>`) : '<div class="empty">No configs shared yet. Be the first: menu &gt; Tools &gt; Configs in the mod.</div>';
+    } catch { box.innerHTML = '<div class="empty">The configs couldn\'t be loaded.</div>'; }
+  }
+  for (const b of document.querySelectorAll(".cfgbar button")) {
+    b.addEventListener("click", () => {
+      cfgSort = b.dataset.sort;
+      for (const o of document.querySelectorAll(".cfgbar button")) o.classList.toggle("on", o === b);
+      loadConfigs();
+    });
+  }
+
   async function account() {
     const box = document.getElementById("account");
     try {
@@ -590,12 +632,15 @@
       for (const o of document.querySelectorAll(".tab")) o.classList.toggle("active", o === t);
       document.getElementById("tab-stats").hidden = t.dataset.tab !== "stats";
       document.getElementById("tab-demons").hidden = t.dataset.tab !== "demons";
+      document.getElementById("tab-configs").hidden = t.dataset.tab !== "configs";
       if (t.dataset.tab === "demons") loadDemons();
-      history.replaceState(null, "", t.dataset.tab === "demons" ? "#demonlist" : "#");
+      if (t.dataset.tab === "configs") loadConfigs();
+      history.replaceState(null, "", t.dataset.tab === "demons" ? "#demonlist" : t.dataset.tab === "configs" ? "#configs" : "#");
       blink();
     });
   }
   if (location.hash === "#demonlist") document.querySelector('.tab[data-tab="demons"]').click();
+  if (location.hash === "#configs") document.querySelector('.tab[data-tab="configs"]').click();
 
   // animated static
   (function staticNoise() {
