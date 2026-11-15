@@ -11453,6 +11453,8 @@ private:
 
     Theme m_t = currentTheme();
     bool m_light = Mod::get()->getSavedValue<bool>("ui-light", false);
+    // v3.2.2: Clean (the default): normal fonts and flat cards, no static. TV: the website's look.
+    bool m_clean = Mod::get()->getSavedValue<bool>("ui-clean", true);
     int m_bg = Mod::get()->getSavedValue<int>("ui-bg", 0);
     ccColor3B m_text { 232, 234, 255 };
     ccColor3B m_muted { 142, 148, 190 };
@@ -11734,6 +11736,9 @@ private:
         if (m_light) {
             roundRect(d, r, 9.f, cardFill(), 0.6f, col(m_t.main, 0.45f));
         }
+        else if (m_clean) {
+            roundRect(d, r, 9.f, col({ 34, 34, 42 }, 0.86f), 0.5f, col(m_t.main, 0.3f));
+        }
         else {
             // v3.2: an old TV like on the website: a dark case, a grey screen inside with scan lines
             roundRect(d, { r.origin.x - 1.5f, r.origin.y - 1.5f, r.size.width + 3.f, r.size.height + 3.f }, 10.5f, col({ 22, 21, 26 }, 0.97f), 0.6f,
@@ -11848,7 +11853,7 @@ private:
             return static_cast<float>((seed >> 8) & 0xffff) / 65535.f;
         };
         m_static = nullptr;
-        if (!m_light) {
+        if (!m_light && !m_clean) {
             // v3.2: TV static over the background, with scan lines, like the website
             m_static = CCSprite::createWithTexture(noiseTexture(), CCRect(0.f, 0.f, W, H));
             m_static->setAnchorPoint({ 0.f, 0.f });
@@ -12411,6 +12416,18 @@ private:
             switchItem({ x + colW - 23.f, y }, Mod::get()->getSavedValue<bool>("pause-button", true), menu_selector(BufferMenu::onPauseButton), 0, &sw);
             y -= 21.f;
         }
+        {
+            // v3.2.2: the TV look (static, scan lines, the pixel font) is a choice now; Clean is the default
+            auto* d0 = CCDrawNode::create();
+            m_page->addChild(d0, 1);
+            roundRect(d0, { x + 5.f, y - 10.f, colW - 10.f, 20.f }, 6.f, m_light ? col({ 255, 255, 255 }, 0.6f) : col({ 255, 255, 255 }, 0.035f), 0.4f,
+                col(m_t.main, 0.25f));
+            label(m_page, "TV Style", 0.48f, m_text, { x + 12.f, y + 3.5f }, { 0.f, 0.5f });
+            label(m_page, "Static, scan lines and the site's pixel font", 0.3f, m_muted, { x + 12.f, y - 5.f }, { 0.f, 0.5f })
+                ->limitLabelWidth(colW - 50.f, 0.3f, 0.12f);
+            switchItem({ x + colW - 23.f, y }, !m_clean, menu_selector(BufferMenu::onTvStyle), 0, nullptr);
+            y -= 21.f;
+        }
         auto row = [&](char const* name) {
             auto* d0 = CCDrawNode::create();
             roundRect(d0, { x + 5.f, y - 9.f, colW - 10.f, 18.f }, 6.f, m_light ? col({ 255, 255, 255 }, 0.6f) : col({ 255, 255, 255 }, 0.035f), 0.4f,
@@ -12653,7 +12670,8 @@ private:
     void applyLook() {
         m_t = currentTheme();
         m_light = Mod::get()->getSavedValue<bool>("ui-light", false);
-        s_siteFont = !m_light;
+        m_clean = Mod::get()->getSavedValue<bool>("ui-clean", true);
+        s_siteFont = !m_light && !m_clean;
         m_bg = Mod::get()->getSavedValue<int>("ui-bg", 0);
         if (m_light) {
             m_text = { 34, 28, 56 };
@@ -12838,6 +12856,11 @@ private:
         }
         s_tab = TAB_SETTINGS;
         rebuildPage();
+    }
+
+    void onTvStyle(CCObject*) {
+        Mod::get()->setSavedValue("ui-clean", !Mod::get()->getSavedValue<bool>("ui-clean", true));
+        wipe();
     }
 
     void onLight(CCObject*) {
