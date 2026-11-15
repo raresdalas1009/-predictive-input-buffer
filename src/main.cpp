@@ -799,6 +799,25 @@ namespace {
     // the game is already dropping frames. v2.75 also capped every click at 45% of a frame:
     // at 240+ fps that was 2 ms, too short for a long cube jump's search (Penumbral's first
     // jump: only +1..+5 delays were ever tried, so most clicks got no save).
+    // v3.2.2: search time is also counted per rendered frame. Several clicks in one frame (wave
+    // spam, press + release) each got the full budget, and at 240+ FPS one budget was already
+    // longer than the frame: every click dropped a frame. Now all of a frame's searches share
+    // about half a frame (at least 1.5 ms); a search that runs out goes on next tick (no-hitch).
+    unsigned frameSearchId = 0;
+    double frameSearchMs = 0.0;
+
+    double frameSearchLeft() {
+        auto* director = CCDirector::get();
+        unsigned id = director->getTotalFrames();
+        if (id != frameSearchId) {
+            frameSearchId = id;
+            frameSearchMs = 0.0;
+        }
+        double interval = director->getAnimationInterval() * 1000.0;
+        double cap = interval > 0.0 ? std::clamp(interval * 0.5, 1.5, 8.0) : 4.0;
+        return std::max(1.0, cap - frameSearchMs);
+    }
+
     void clickBudget() {
         double budget = buf.userBudget;
         if (buf.autoBudget) {
@@ -813,6 +832,7 @@ namespace {
             if (interval > 0.0 && frame > std::max(interval * 2.0, 20.0)) {
                 budget = std::min(budget, 4.0);
             }
+            budget = std::min(budget, frameSearchLeft());
         }
         buf.budgetMs = budget;
     }
@@ -1867,6 +1887,13 @@ namespace {
         if (!buf.predictTriggers || triggerChecks.size() >= 16 || !layer || !layer->m_player1 || tickCount - attemptStartTick < st(60)) {
             return;
         }
+        // v3.2.2: a sample is enough for the self-check. It used to scan the whole target group on
+        // every move trigger (thousands of objects a step on effect-heavy levels, without a click)
+        static int lastStart = -1000000;
+        if (tickCount - lastStart < st(6) && tickCount >= lastStart) {
+            return;
+        }
+        lastStart = tickCount;
         bool rotate = t->m_objectID == 1346;
         if (!plainTrigger(t, rotate) || t->m_duration * 60.f < TICK) {
             return;
@@ -1877,7 +1904,11 @@ namespace {
         }
         float tickLength = buf.tickLength > 0.001f && buf.tickLength < 2.f ? buf.tickLength : TICK;
         double px = layer->m_player1->getPositionX();
+        int scanned = 0;
         for (auto* object : CCArrayExt<GameObject*>(group)) {
+            if (++scanned > 48) {
+                return;
+            }
             if (!object || object == t || object->m_isDecoration || object->m_objectType == GameObjectType::Decoration ||
                 object->m_positionX < px - 150.0 || object->m_positionX > px + 700.0) {
                 continue;
@@ -3092,6 +3123,8 @@ namespace {
         }
         ~ClickTimer() {
             clickTimed = false;
+            frameSearchLeft();  // starts a new count on a new frame
+            frameSearchMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - clickStart).count();
         }
     };
 
@@ -13116,11 +13149,13 @@ class $modify(BufEffectGameObject, EffectGameObject) {
         if (buf.simulating) {
             return;
         }
-        if (buf.predictTriggers) {
+        bool track = buf.predictTriggers && (buf.enabled || autoplay.active) && GameManager::get()->m_playLayer &&
+                     static_cast<GJBaseGameLayer*>(GameManager::get()->m_playLayer) == layer;
+        if (track) {
             noteTriggerFire(layer, this);  // v2.84.2: any trigger with a target group, for the self-check
         }
         // v2.81: when a move (v2.83: or rotation) started, so a prediction can follow the rest of it
-        if ((m_objectID == 901 || m_objectID == 1346) && buf.predictTriggers && m_duration > 0.f && firedMoves.size() < 256) {
+        if (track && (m_objectID == 901 || m_objectID == 1346) && m_duration > 0.f && firedMoves.size() < 256) {
             firedMoves[this] = tickCount;
             startTriggerCheck(layer, this);  // v2.84
         }
